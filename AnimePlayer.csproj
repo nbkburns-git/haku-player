@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- off: WPF + WinForms implicit usings clash (Button, Application, ...) -->
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>HakuPlayer</AssemblyName>
+    <Product>Haku Player</Product>
+    <ApplicationIcon>Assets\haku.ico</ApplicationIcon>
+    <!-- optimized code even in the everyday (Debug) build, which keeps its output folder and data -->
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+  <ItemGroup>
+    <Resource Include="Assets\logo.png" />
+    <Resource Include="Assets\haku.ico" />
+    <!-- Shippori Mincho (SIL Open Font License, see Assets\Fonts\OFL.txt): the home page title -->
+    <Resource Include="Assets\Fonts\ShipporiMincho-ExtraBold.ttf" />
+    <None Include="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Assets\glass.glsl" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

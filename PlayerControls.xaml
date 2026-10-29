@@ -1,0 +1,132 @@
+<Window x:Class="AnimePlayer.PlayerControls"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize"
+        ShowInTaskbar="False" ShowActivated="False" Foreground="{StaticResource Text}"
+        FontFamily="Segoe UI Variable Display, Segoe UI">
+  <!-- Covers the whole video. Fully transparent pixels click through to it, so only the pills and preview take the mouse. -->
+  <Window.Resources>
+    <!-- a tight shadow behind text only, for legibility on bright scenes -->
+    <DropShadowEffect x:Key="TextShadow" BlurRadius="6" ShadowDepth="0" Opacity="0.5"/>
+  </Window.Resources>
+  <Grid x:Name="Root" PreviewMouseDown="OnAnyMouseDown">
+    <Canvas x:Name="PreviewLayer">
+      <!-- Hover preview: glass card with the exact frame and its time -->
+      <Grid x:Name="Preview" Visibility="Collapsed" Width="336" Opacity="0" IsHitTestVisible="False">
+        <!-- glass layers come from GlassSurface (live blur of the video behind it) -->
+        <Border CornerRadius="16" Padding="8" Background="#26080A10">
+          <StackPanel>
+            <Border x:Name="PreviewFrame" Width="320" Height="180" Background="#20FFFFFF">
+              <Border.OpacityMask>
+                <VisualBrush><VisualBrush.Visual><Border Width="320" Height="180" CornerRadius="10" Background="Black"/></VisualBrush.Visual></VisualBrush>
+              </Border.OpacityMask>
+              <Image x:Name="PreviewImage" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+            </Border>
+            <TextBlock x:Name="PreviewTime" HorizontalAlignment="Center" FontSize="15" FontWeight="SemiBold" Margin="0,8,0,2" Effect="{StaticResource TextShadow}"/>
+          </StackPanel>
+        </Border>
+      </Grid>
+      <!-- Popup menu (audio / subtitles / speed), filled in code -->
+      <Grid x:Name="Menu" Visibility="Collapsed" Width="300" Opacity="0">
+        <!-- glass layers are added in code (GlassSurface); a light shade keeps the text readable -->
+        <Border CornerRadius="18" Background="#38080A10" Padding="8">
+          <ScrollViewer x:Name="MenuScroll" MaxHeight="520" VerticalScrollBarVisibility="Auto">
+            <StackPanel x:Name="MenuItems"/>
+          </ScrollViewer>
+        </Border>
+      </Grid>
+    </Canvas>
+
+    <!-- TOP pill: back, title, window buttons. Empty space drags the window. -->
+    <Grid x:Name="TopBar" VerticalAlignment="Top" Margin="24,20,24,0" Height="56" MouseMove="OnActivity"
+          MouseLeftButtonDown="OnTopBarDown" Background="Transparent">
+      <Grid.RenderTransform><TranslateTransform x:Name="TopShift"/></Grid.RenderTransform>
+      <DockPanel Margin="10,0,12,0">
+        <StackPanel x:Name="WinButtons" DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="PopBtn" Style="{StaticResource Caption}" Foreground="{StaticResource Text}" Click="OnPopOut" ToolTip="Pop out: small player that stays on top" Content="&#xE8A7;" FontSize="13" Margin="0,0,10,0" AutomationProperties.Name="Pop out"/>
+          <Button Style="{StaticResource Caption}" Foreground="{StaticResource Text}" Click="OnMin" ToolTip="Minimize" Content="&#xE921;" AutomationProperties.Name="Minimize"/>
+          <Button x:Name="MaxBtn" Style="{StaticResource Caption}" Foreground="{StaticResource Text}" Click="OnMax" ToolTip="Maximize" Content="&#xE922;" Margin="4,0" AutomationProperties.Name="Maximize"/>
+          <Button Style="{StaticResource Caption}" Foreground="{StaticResource Text}" Click="OnCloseApp" ToolTip="Close" Content="&#xE8BB;" Tag="Close" AutomationProperties.Name="Close"/>
+        </StackPanel>
+        <Button Style="{StaticResource Back}" Click="OnBackClick" VerticalAlignment="Center" AutomationProperties.Name="Back"/>
+        <Border x:Name="Quality" DockPanel.Dock="Right" Visibility="Collapsed" CornerRadius="7" Padding="8,2" Margin="0,0,14,0" VerticalAlignment="Center"
+                BorderThickness="1" BorderBrush="#55FFFFFF" Background="#1AFFFFFF" ToolTip="Playing the original file, no downscaling">
+          <TextBlock x:Name="QualityText" FontSize="12" FontWeight="Bold"/>
+        </Border>
+        <TextBlock x:Name="TitleText" Effect="{StaticResource TextShadow}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" Margin="16,0,16,0"
+                   TextTrimming="CharacterEllipsis" Foreground="{StaticResource Text}"/>
+      </DockPanel>
+    </Grid>
+
+    <!-- BOTTOM pill: transport, timeline, volume, fullscreen -->
+    <Grid x:Name="Pill" VerticalAlignment="Bottom" Margin="40,0,40,28" Height="68" MouseMove="OnActivity" MouseWheel="OnWheel">
+      <Grid.RenderTransform><TranslateTransform x:Name="PillShift"/></Grid.RenderTransform>
+      <DockPanel Margin="14,0,16,0">
+        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Style="{StaticResource Icon}" Click="OnPrev" ToolTip="Previous" AutomationProperties.Name="Previous" Content="&#xE892;"/>
+          <Button x:Name="PlayPause" Style="{StaticResource Icon}" Click="OnPlayPause" AutomationProperties.Name="PlayPause" ToolTip="Play / Pause (Space)"
+                  Content="&#xE769;" Width="52" Height="52" FontSize="26"/>
+          <Button Style="{StaticResource Icon}" Click="OnNext" ToolTip="Next" AutomationProperties.Name="Next" Content="&#xE893;"/>
+        </StackPanel>
+        <Button x:Name="FullBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnFullscreen" AutomationProperties.Name="Fullscreen" ToolTip="Fullscreen (F)" Content="&#xE740;" Margin="4,0,0,0"/>
+
+        <Button x:Name="SettingsBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnSettingsMenu" AutomationProperties.Name="Settings" ToolTip="Settings" Content="&#xE713;" Margin="2,0,0,0"/>
+        <!-- autoplay next video: bright when on, dimmed when off -->
+        <Button x:Name="AutoBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnAutoplay" AutomationProperties.Name="Autoplay" ToolTip="Autoplay: on" Content="&#xE8EE;" Margin="2,0,0,0"/>
+        <Button x:Name="SpeedBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnSpeedMenu" AutomationProperties.Name="Speed" ToolTip="Playback speed"
+                Content="1×" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="14" FontWeight="SemiBold" Width="52" Margin="2,0,0,0"/>
+        <Button x:Name="TracksBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnTracksMenu" AutomationProperties.Name="Tracks" ToolTip="Audio &amp; subtitles" Content="&#xE7F0;" Margin="8,0,0,0"/>
+        <!-- volume: speaker toggles mute; slider sets level; mouse wheel over the bar works too -->
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+          <Button x:Name="MuteBtn" Style="{StaticResource Icon}" Click="OnMute" ToolTip="Mute (M)" AutomationProperties.Name="Mute" Content="&#xE995;"/>
+          <Grid x:Name="VolTrack" Width="110" Height="36" Background="#01000000" Cursor="Hand" Margin="2,0,0,0"
+                MouseLeftButtonDown="OnVolDown" MouseMove="OnVolMove" MouseLeftButtonUp="OnVolUp">
+            <Border Height="4" CornerRadius="2" Background="#5A8A8A8A" VerticalAlignment="Center"/>
+            <Border x:Name="VolFill" Height="4" CornerRadius="2" Background="White" HorizontalAlignment="Left" VerticalAlignment="Center" Width="110"/>
+            <Ellipse x:Name="VolKnob" Width="12" Height="12" Fill="White" HorizontalAlignment="Left" VerticalAlignment="Center">
+              <Ellipse.Effect><DropShadowEffect BlurRadius="6" ShadowDepth="1" Opacity="0.5"/></Ellipse.Effect>
+            </Ellipse>
+          </Grid>
+          <TextBlock x:Name="VolText" Effect="{StaticResource TextShadow}" Width="36" TextAlignment="Right" VerticalAlignment="Center" FontSize="13" Foreground="{StaticResource Text}" Opacity="0.85"/>
+        </StackPanel>
+
+        <TextBlock x:Name="Duration" Effect="{StaticResource TextShadow}" DockPanel.Dock="Right" VerticalAlignment="Center" FontSize="15" Foreground="{StaticResource Text}" Opacity="0.85" Margin="14,0,0,0"/>
+        <TextBlock x:Name="Current" Effect="{StaticResource TextShadow}" DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold" Margin="14,0,14,0"/>
+
+        <!-- timeline -->
+        <Grid x:Name="Timeline" Height="36" Background="#01000000" Cursor="Hand" VerticalAlignment="Center"
+              MouseMove="OnTimelineMove" MouseEnter="OnTimelineEnter" MouseLeave="OnTimelineLeave"
+              MouseLeftButtonDown="OnTimelineDown" MouseLeftButtonUp="OnTimelineUp">
+          <Border Height="5" CornerRadius="3" Background="#5A8A8A8A" VerticalAlignment="Center"/>
+          <!-- chapter ticks, and the opening / ending as brighter stretches of the track (drawn in code) -->
+          <Canvas x:Name="Marks" IsHitTestVisible="False"/>
+          <Border x:Name="HoverFill" Height="5" CornerRadius="3" Background="#30FFFFFF" HorizontalAlignment="Left" VerticalAlignment="Center" Width="0"/>
+          <Border x:Name="Fill" Height="5" CornerRadius="3" HorizontalAlignment="Left" VerticalAlignment="Center" Width="0" Background="{DynamicResource AccentGrad}">
+            <Border.Effect><DropShadowEffect Color="{DynamicResource AccentColor}" BlurRadius="8" ShadowDepth="0" Opacity="0.45"/></Border.Effect>
+          </Border>
+          <Ellipse x:Name="Knob" Width="16" Height="16" Fill="White" HorizontalAlignment="Left" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+            <Ellipse.RenderTransform><ScaleTransform x:Name="KnobScale" ScaleX="0.6" ScaleY="0.6"/></Ellipse.RenderTransform>
+            <Ellipse.Effect><DropShadowEffect BlurRadius="8" ShadowDepth="1" Opacity="0.5"/></Ellipse.Effect>
+          </Ellipse>
+        </Grid>
+      </DockPanel>
+    </Grid>
+
+    <!-- Skip opening / Up next: floats above the bottom pill, and stays while the controls are hidden. Content built in code. -->
+    <Grid x:Name="Prompt" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,40,112" Visibility="Collapsed" Opacity="0" MouseMove="OnActivity">
+      <Grid.RenderTransform><TranslateTransform x:Name="PromptShift"/></Grid.RenderTransform>
+      <Border CornerRadius="20" Background="#38080A10" Padding="18,12,14,12">
+        <StackPanel x:Name="PromptBody"/>
+      </Border>
+    </Grid>
+
+    <!-- Debug info (Settings > Debug info): live playback details, refreshed every second -->
+    <ContentControl x:Name="DebugPanel" Style="{StaticResource GlassPanel}" Visibility="Collapsed" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="24,92,24,0"
+                    Padding="16,12" IsHitTestVisible="False">
+      <StackPanel>
+        <TextBlock Text="DEBUG" FontSize="11" FontWeight="Bold" Opacity="0.55" Margin="0,0,0,6"/>
+        <TextBlock x:Name="DebugText" FontFamily="Cascadia Mono, Consolas" FontSize="12.5" LineHeight="19" Foreground="#E6FFFFFF" TextWrapping="NoWrap"/>
+      </StackPanel>
+    </ContentControl>
+  </Grid>
+</Window>

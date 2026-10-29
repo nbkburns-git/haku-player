@@ -1,0 +1,8 @@
+# build output
+bin/
+obj/
+publish/
+*.user
+.vs/
+# old in-folder app data (now kept in %LOCALAPPDATA%\Haku Player)
+data/
