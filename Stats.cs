@@ -76,8 +76,8 @@ public partial class MainWindow
 
     void StatsPage(Panel p)
     {
-        var shows = lib.GetValueOrDefault("Shows") ?? new();
-        var ops = lib.GetValueOrDefault("Openings") ?? new();
+        var shows = Everything(lib).Where(e => e.Unit != "themes").ToList();
+        var ops = Everything(lib).Where(e => e.Unit == "themes").ToList();
         var files = shows.Concat(ops).SelectMany(e => e.Videos).Select(v => v.Path).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         MeasureLibrary(files);
         var cache = Durations();

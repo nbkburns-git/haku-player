@@ -23,12 +23,13 @@ public partial class MainWindow
     List<(Entry E, int Index, WatchRec? Rec, DateTime Last)> ContinueList()
     {
         var list = new List<(Entry, int, WatchRec?, DateTime)>();
-        foreach (var e in lib.GetValueOrDefault("Shows") ?? new())
+        foreach (var e in Everything(lib).Where(x => x.Unit != "themes"))
         {
             int bi = -1; WatchRec? best = null;
             for (int i = 0; i < e.Videos.Count; i++)
                 if (Watch.Get(e.Videos[i].Path) is { } r && (best == null || r.Last > best.Last)) { best = r; bi = i; }
             if (best == null) continue;
+            if (Watch.Data.Hidden.TryGetValue(e.Folder, out var hid) && best.Last <= hid) continue; // closed, and not watched since
             if (!best.Done && best.Pos > 5) list.Add((e, bi, best, best.Last)); // mid-episode: resume it
             else if (best.Done && e.Kind != "movie")
             {
@@ -101,6 +102,20 @@ public partial class MainWindow
         text.Children.Add(progress);
         dock.Children.Add(text);
         body.Children.Add(dock);
+        var close = new Button
+        {
+            Template = (ControlTemplate)FindResource("CloseDotTemplate"), Content = new TextBlock { Text = "", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 11 }, Width = 30, Height = 30, Focusable = false, Cursor = Cursors.Hand, Foreground = (Brush)FindResource("Text"),
+            HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 12, 14, 0), ToolTip = "Remove from Continue watching",
+        };
+        System.Windows.Automation.AutomationProperties.SetName(close, $"Remove {e.Name} from Continue watching");
+        close.Click += (_, a) =>
+        {
+            a.Handled = true; // not a click on the card
+            Watch.Data.Hidden[e.Folder] = DateTime.Now; // comes back once you watch it again
+            Watch.Save();
+            UpdateContinue();
+        };
+        body.Children.Add(close);
         RoundClip(body, 28);
 
         var card = new Button

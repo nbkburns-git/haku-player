@@ -5,12 +5,34 @@ using System.Text.Json;
 
 namespace AnimePlayer;
 
-// A library location. Kind: "anime" (a folder with Anime Shows / Anime Openings inside),
-// "tv" (a folder of TV show folders) or "movie" (a folder of movie folders or files).
+// A folder in a library, and how it's read. Kind: "anime" (a folder of anime show folders), "tv" (TV show folders),
+// "movie" (movie folders or files) or "themes" (opening / ending folders, one per show).
+// Tag: a custom tag's name (read like Kind), or null for the kind's own name.
+// (Before libraries had names, Kind "anime" meant a folder with Anime Shows / Anime Openings inside; such a folder still works.)
 public sealed class LibraryFolder
 {
     public string Path { get; set; } = "";
     public string Kind { get; set; } = "anime";
+    public string? Tag { get; set; }
+    [System.Text.Json.Serialization.JsonIgnore] public string TagName => Tag ?? KindName(Kind);
+    public static readonly (string Kind, string Name)[] Kinds = { ("anime", "Anime"), ("tv", "TV shows"), ("movie", "Movies"), ("themes", "Openings / Endings") };
+    public static string KindName(string kind) => Array.Find(Kinds, k => k.Kind == kind).Name ?? kind;
+}
+
+// A named library: one tile on the home page, made of any number of folders.
+public sealed class MediaLibrary
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public string Name { get; set; } = "New library";
+    public List<LibraryFolder> Folders { get; set; } = new();
+    public bool Home { get; set; } = true;            // shown as a tile on the home page
+}
+
+// A tag you made: its name, and which built-in kind its folders are read like.
+public sealed class TagDef
+{
+    public string Name { get; set; } = "";
+    public string Kind { get; set; } = "tv";
 }
 
 // Where you left off: the show folder, the episode file, and how far in (seconds).
@@ -49,11 +71,14 @@ public sealed class Settings
     public bool DiscordStatus { get; set; }           // show what you're watching on your Discord profile
     public string DiscordAppId { get; set; } = "";    // your Discord application's id (discord.com/developers)
     public string LibraryRoot { get; set; } = "";     // old single anime folder; moved into Libraries
-    public List<LibraryFolder> Libraries { get; set; } = new();
+    public List<LibraryFolder> Libraries { get; set; } = new(); // old unnamed locations; moved into Libs
+    public List<MediaLibrary> Libs { get; set; } = new(); // in home page order
+    public List<TagDef> Tags { get; set; } = new();
     public bool MovingBackground { get; set; } = true;
     public bool MovingAlways { get; set; } = true;    // keep drifting while another app is in front (off = pause to save CPU)
     public bool CoverGlow { get; set; } = true;
     public string Theme { get; set; } = "sakura";
+    public string CustomColor { get; set; } = "#2BA8FF"; // the "custom" theme's accent
     public int Glass { get; set; } = 1;
     public int[]? PopRect { get; set; }               // last pop-out window: left, top, right, bottom (pixels)
     public HashSet<string> Favorites { get; set; } = new(StringComparer.OrdinalIgnoreCase);      // series folders
@@ -110,7 +135,22 @@ public sealed class Settings
         // v2: anime defaults to Japanese audio (older files saved "" = file default)
         if (s.SettingsVersion < 2) { if (s.AudioLang == "") s.AudioLang = "jpn"; s.SettingsVersion = 2; }
         // one anime folder -> a list of library locations
-        if (s.Libraries.Count == 0) s.Libraries.Add(new LibraryFolder { Path = s.LibraryRoot is { Length: > 0 } r ? r : @"A:\Anime Upscaled", Kind = "anime" });
+        if (s.Libraries.Count == 0 && s.SettingsVersion < 3 && s.LibraryRoot is { Length: > 0 } r) s.Libraries.Add(new LibraryFolder { Path = r, Kind = "anime" });
+        // v3: unnamed locations -> two named libraries, the same two home tiles as before
+        if (s.SettingsVersion < 3)
+        {
+            var shows = new MediaLibrary { Name = "Shows and Movies" };
+            var themes = new MediaLibrary { Name = "Openings / Endings" };
+            foreach (var lf in s.Libraries)
+            {
+                if (lf.Kind != "anime") { shows.Folders.Add(new LibraryFolder { Path = lf.Path, Kind = lf.Kind }); continue; }
+                shows.Folders.Add(new LibraryFolder { Path = Path.Combine(lf.Path, "Anime Shows"), Kind = "anime" });
+                themes.Folders.Add(new LibraryFolder { Path = Path.Combine(lf.Path, "Anime Openings"), Kind = "themes" });
+            }
+            s.Libs = new() { shows, themes };
+            s.SettingsVersion = 3;
+            s.Save(); // keeps the old list too, for an older version of the app
+        }
         return s;
     }
 

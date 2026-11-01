@@ -1,12 +1,44 @@
+using System;
 using System.Diagnostics;
+using System.IO;
+using System.IO.Pipes;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text;
+using System.Threading;
 using System.Windows;
 
 namespace AnimePlayer;
 
 public partial class App : Application
 {
+    // one per data folder, so a test copy with its own HAKU_DATA_DIR doesn't hand files to the everyday one
+    public static readonly string InstanceKey = "HakuPlayer-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Settings.DataDir.ToLowerInvariant())))[..16];
+    static Mutex? instance;
+
+    [DllImport("user32.dll")] static extern bool AllowSetForegroundWindow(int pid);
+
+    void OnGlassLoaded(object s, RoutedEventArgs e) => GlassFrost.Attach((System.Windows.Controls.ContentControl)s);
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        // a video dropped on the exe while the app is open: play it in that window instead of opening a second one
+        instance = new Mutex(true, InstanceKey, out bool first);
+        if (!first && e.Args.Length > 0 && File.Exists(e.Args[0]))
+        {
+            try
+            {
+                AllowSetForegroundWindow(-1); // we were just launched by the user, so we may let it come to the front
+                using var c = new NamedPipeClientStream(".", InstanceKey, PipeDirection.Out);
+                c.Connect(3000);
+                using (var w = new StreamWriter(c)) w.WriteLine(Path.GetFullPath(e.Args[0]));
+                Environment.Exit(0);
+            }
+            catch { } // it didn't answer: open normally
+        }
+        // tooltips: copy the screen behind them for their frost before they show (GlassFrost.cs)
+        EventManager.RegisterClassHandler(typeof(FrameworkElement), FrameworkElement.ToolTipOpeningEvent,
+            new System.Windows.Controls.ToolTipEventHandler((s, _) => GlassFrost.Grab((FrameworkElement)s)), true);
         Theme.Install();
 #if DEBUG
         // Self-check for the filename -> title cleanup (real filenames from the library).
@@ -15,6 +47,9 @@ public partial class App : Application
         Debug.Assert(AnimePlayer.MainWindow.Friendly(@"x\ShingekiNoKyojinS4Part2-OP1-Encoded.23.976fps.mp4") == "Shingeki No Kyojin S4 Part 2 – OP1");
         Debug.Assert(AnimePlayer.MainWindow.Friendly(@"x\[Reaktor] Psycho-Pass S01 - E01 [1080p][x265][10-bit][Dual-Audio]-Encoded.23.976fps.mkv") == "Psycho-Pass S01 - E01");
         Debug.Assert(AnimePlayer.MainWindow.Friendly(@"x\S01E01 - The Day a New Demon Was Born-Encoded.23.976fps.mkv") == "S01E01 - The Day a New Demon Was Born");
+        Debug.Assert(AnimePlayer.MainWindow.ShowGuess(@"x\[Grp] Naruto - 012 [1080p].mkv") == "Naruto");
+        Debug.Assert(AnimePlayer.MainWindow.ShowGuess(@"x\Rick.and.Morty.S01E02.1080p.mkv") == "Rick and Morty");
+        Debug.Assert(AnimePlayer.MainWindow.ShowGuess(@"x\KimetsuNoYaiba-OP1.webm", true) == "Kimetsu No Yaiba");
 #endif
         base.OnStartup(e);
     }

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -17,6 +17,19 @@ public partial class MainWindow
     static readonly string ThumbDir = Path.Combine(Settings.DataDir, "thumbs");
 
     GlassSurface? settingsGlass;
+    LibraryFolder? tagEditor;          // folder whose "+ Tag" editor is open
+    string newTagName = "", newTagKind = "tv";
+
+    // what a newly added folder probably holds (you can change it with the chips)
+    static string GuessKind(string path)
+    {
+        var name = Path.GetFileName(path.TrimEnd('\\'));
+        bool Has(string sub) => Directory.Exists(Path.Combine(path, sub));
+        bool Like(string pattern) => System.Text.RegularExpressions.Regex.IsMatch(name, pattern, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (Like("opening|ending|themes") || (Has("Anime Openings") && !Has("Anime Shows"))) return "themes";
+        if (Has("Anime Shows") || Like("anime")) return "anime";
+        return Like("movie|film") ? "movie" : "tv";
+    }
 
     void OnOpenSettings(object s, RoutedEventArgs e)
     {
@@ -93,59 +106,155 @@ public partial class MainWindow
 
         void LibraryPage()
         {
-        Section(p, "Library locations");
-        async Task Changed() { S.Save(); BuildGlobalSettings(); await RescanLibraries(); }
-        foreach (var lf in S.Libraries.ToList())
+        async Task Rescan() { S.Save(); BuildGlobalSettings(); await RescanLibraries(); }
+        void Reorder() { S.Save(); BuildGlobalSettings(); BuildTiles(); }
+        Brush line = new SolidColorBrush(Color.FromArgb(0x22, 255, 255, 255));
+        Button Icon(string glyph, string name, string tip, Action click, bool enabled = true)
         {
-            // one row per location: where it is, what's in it (type), remove
-            var card = new Border { CornerRadius = new CornerRadius(14), Padding = new Thickness(16, 12, 10, 12), Margin = new Thickness(0, 0, 0, 8),
-                Background = new SolidColorBrush(Color.FromArgb(0x16, 255, 255, 255)), BorderThickness = new Thickness(1), BorderBrush = new SolidColorBrush(Color.FromArgb(0x22, 255, 255, 255)) };
-            var row = new DockPanel();
-            var remove = new Button { Style = (Style)FindResource("Caption"), Content = "", FontSize = 14, ToolTip = "Remove this location (your files are not touched)", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(8, 0, 0, 0) };
-            System.Windows.Automation.AutomationProperties.SetName(remove, $"Remove library {lf.Path}");
-            remove.Click += async (_, _) => { S.Libraries.Remove(lf); await Changed(); };
-            DockPanel.SetDock(remove, Dock.Right);
-            row.Children.Add(remove);
-            var kinds = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            foreach (var (k, label) in new[] { ("anime", "Anime"), ("tv", "TV shows"), ("movie", "Movies") })
+            var b = new Button { Style = (Style)FindResource("Caption"), Content = glyph, FontSize = 14, ToolTip = tip, VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(4, 0, 0, 0), IsEnabled = enabled, Opacity = enabled ? 1 : 0.3 };
+            System.Windows.Automation.AutomationProperties.SetName(b, name);
+            b.Click += (_, _) => click();
+            return b;
+        }
+        Button Chip(string text, bool on, string name, Action click)
+        {
+            var c = new Button { Style = (Style)FindResource("Chip"), Content = text, Tag = on ? "On" : null, Foreground = (Brush)FindResource("Text"), Margin = new Thickness(0, 0, 6, 6) };
+            System.Windows.Automation.AutomationProperties.SetName(c, name);
+            c.Click += (_, _) => click();
+            return c;
+        }
+        Border Field(TextBox box) => new() { Child = box, CornerRadius = new CornerRadius(16), Background = (Brush)FindResource("GlassFill"), BorderThickness = new Thickness(1),
+            BorderBrush = (Brush)FindResource("GlassStroke"), VerticalAlignment = VerticalAlignment.Center };
+        UIElement Plus(string text) => new StackPanel { Orientation = Orientation.Horizontal, Children =
+        {
+            new TextBlock { Text = "", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 9, 0) },
+            new TextBlock { Text = text },
+        } };
+
+        Section(p, "Libraries");
+        for (int i = 0; i < S.Libs.Count; i++)
+        {
+            var l = S.Libs[i]; int at = i;
+            var inner = new StackPanel();
+            p.Children.Add(new Border { Child = inner, CornerRadius = new CornerRadius(16), Padding = new Thickness(16, 12, 12, 12), Margin = new Thickness(0, 0, 0, 10),
+                Background = new SolidColorBrush(Color.FromArgb(0x16, 255, 255, 255)), BorderThickness = new Thickness(1), BorderBrush = line });
+
+            // name (type to rename), On home, move up / down, delete
+            var head = new DockPanel { Margin = new Thickness(0, 0, 0, 4) };
+            var tools = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
+            var home = Chip("On home", l.Home, $"{l.Name}: on home", () => { l.Home = !l.Home; Reorder(); });
+            home.Margin = new Thickness(0, 0, 6, 0);
+            home.ToolTip = "Show this library as a tile on the home page";
+            tools.Children.Add(home);
+            tools.Children.Add(Icon("", $"Move {l.Name} up", "Move up (earlier on the home page)", () => { S.Libs.RemoveAt(at); S.Libs.Insert(at - 1, l); Reorder(); }, at > 0));
+            tools.Children.Add(Icon("", $"Move {l.Name} down", "Move down (later on the home page)", () => { S.Libs.RemoveAt(at); S.Libs.Insert(at + 1, l); Reorder(); }, at < S.Libs.Count - 1));
+            tools.Children.Add(Icon("", $"Delete library {l.Name}", "Delete this library (your files are not touched)", async () => { S.Libs.Remove(l); await Rescan(); }));
+            DockPanel.SetDock(tools, Dock.Right);
+            head.Children.Add(tools);
+            var name = new TextBox { Text = l.Name, Background = Brushes.Transparent, BorderThickness = new Thickness(0), Foreground = (Brush)FindResource("Text"), CaretBrush = Brushes.White,
+                FontSize = 19, FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center, ToolTip = "Library name: click to rename" };
+            System.Windows.Automation.AutomationProperties.SetName(name, "Library name");
+            name.TextChanged += (_, _) => { l.Name = name.Text.Trim().Length > 0 ? name.Text.Trim() : "Library"; S.Save(); };
+            name.LostFocus += (_, _) => BuildTiles();
+            name.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Enter) { BuildTiles(); System.Windows.Input.Keyboard.ClearFocus(); } };
+            head.Children.Add(name);
+            inner.Children.Add(head);
+
+            if (l.Folders.Count == 0)
+                inner.Children.Add(new TextBlock { Text = "No folders yet. Add one, then choose what's in it.", FontSize = 13, Foreground = (Brush)FindResource("Muted"), Margin = new Thickness(0, 2, 0, 8) });
+            foreach (var f in l.Folders.ToList())
             {
-                var chip = new Button { Style = (Style)FindResource("Chip"), Content = label, Tag = lf.Kind == k ? "On" : null, Foreground = (Brush)FindResource("Text") };
-                System.Windows.Automation.AutomationProperties.SetName(chip, $"{lf.Path}: {label}");
-                chip.Click += async (_, _) => { if (lf.Kind == k) return; lf.Kind = k; await Changed(); };
-                kinds.Children.Add(chip);
+                // a folder: where it is, remove; then its tag (built-in kinds, your own tags, + Tag)
+                var box = new StackPanel { Margin = new Thickness(0, 6, 0, 4) };
+                var row = new DockPanel();
+                var remove = Icon("", $"Remove folder {f.Path}", "Remove this folder from the library (your files are not touched)", async () => { l.Folders.Remove(f); await Rescan(); });
+                DockPanel.SetDock(remove, Dock.Right);
+                row.Children.Add(remove);
+                bool here = Directory.Exists(f.Path);
+                string what = f.Kind switch
+                {
+                    "tv" => "A folder of TV show folders",
+                    "movie" => "A folder of movies",
+                    "themes" => "Opening and ending folders, one per show",
+                    _ => "A folder of anime show folders",
+                };
+                row.Children.Add(Label(f.Path, !here ? "Not found: drive unplugged or folder moved" : f.Tag != null ? $"{what} · read like {LibraryFolder.KindName(f.Kind)}" : what));
+                box.Children.Add(row);
+                var tags = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+                foreach (var (k, label) in LibraryFolder.Kinds)
+                    tags.Children.Add(Chip(label, f.Tag == null && f.Kind == k, $"{f.Path}: {label}", async () => { f.Kind = k; f.Tag = null; await Rescan(); }));
+                foreach (var t in S.Tags.ToList())
+                    tags.Children.Add(Chip(t.Name, f.Tag == t.Name, $"{f.Path}: {t.Name}", async () => { f.Kind = t.Kind; f.Tag = t.Name; await Rescan(); }));
+                tags.Children.Add(Chip("+ Tag", tagEditor == f, $"{f.Path}: new tag", () => { tagEditor = tagEditor == f ? null : f; BuildGlobalSettings(); }));
+                box.Children.Add(tags);
+                if (tagEditor == f) box.Children.Add(TagEditor(f));
+                inner.Children.Add(box);
             }
-            DockPanel.SetDock(kinds, Dock.Right);
-            row.Children.Add(kinds);
-            bool here = Directory.Exists(lf.Path);
-            row.Children.Add(Label(lf.Path, here ? lf.Kind switch { "tv" => "A folder of TV show folders", "movie" => "A folder of movies", _ => "Anime Shows and Anime Openings inside" } : "Not found: drive unplugged or folder moved"));
-            card.Child = row;
-            p.Children.Add(card);
+
+            var addFolder = new Button { Style = (Style)FindResource("Glass"), Padding = new Thickness(14, 6, 16, 6), FontSize = 13.5, Margin = new Thickness(0, 6, 0, 0),
+                HorizontalAlignment = HorizontalAlignment.Left, Content = Plus("Add folder") };
+            System.Windows.Automation.AutomationProperties.SetName(addFolder, $"Add folder to {l.Name}");
+            addFolder.Click += async (_, _) =>
+            {
+                using var dlg = new System.Windows.Forms.FolderBrowserDialog { Description = $"Choose a folder for {l.Name}", UseDescriptionForTitle = true };
+                if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+                var path = dlg.SelectedPath;
+                if (l.Folders.Any(x => string.Equals(x.Path.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))) { Toast("That folder is already in this library"); return; }
+                l.Folders.Add(new LibraryFolder { Path = path, Kind = GuessKind(path) }); // best guess; change it with the chips
+                await Rescan();
+            };
+            inner.Children.Add(addFolder);
         }
 
-        var add = new Button { Style = (Style)FindResource("Glass"), Padding = new Thickness(16, 8, 18, 8), FontSize = 14, Margin = new Thickness(0, 4, 10, 0),
-            Content = new StackPanel { Orientation = Orientation.Horizontal, Children = { new TextBlock { Text = "", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 13, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) }, new TextBlock { Text = "Add library" } } } };
-        System.Windows.Automation.AutomationProperties.SetName(add, "Add library");
-        add.Click += async (_, _) =>
+        var add = new Button { Style = (Style)FindResource("Glass"), Padding = new Thickness(16, 8, 18, 8), FontSize = 14, Margin = new Thickness(0, 4, 10, 0), Content = Plus("New library") };
+        System.Windows.Automation.AutomationProperties.SetName(add, "New library");
+        add.Click += (_, _) =>
         {
-            using var dlg = new System.Windows.Forms.FolderBrowserDialog { Description = "Choose a folder of anime, TV shows or movies", UseDescriptionForTitle = true };
-            if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
-            var path = dlg.SelectedPath;
-            if (S.Libraries.Any(x => string.Equals(x.Path.TrimEnd('\\'), path.TrimEnd('\\'), StringComparison.OrdinalIgnoreCase))) { Toast("That folder is already in your library"); return; }
-            // best guess at what it holds; you can change it with the chips
-            string kind = Directory.Exists(Path.Combine(path, "Anime Shows")) || Directory.Exists(Path.Combine(path, "Anime Openings")) ? "anime"
-                : System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(path.TrimEnd('\\')), "movie|film", System.Text.RegularExpressions.RegexOptions.IgnoreCase) ? "movie" : "tv";
-            S.Libraries.Add(new LibraryFolder { Path = path, Kind = kind });
-            await Changed();
+            S.Libs.Add(new MediaLibrary());
+            lib[S.Libs[^1].Id] = new();
+            Reorder();
+            Dispatcher.BeginInvoke(() => SettingsScroll.ScrollToEnd(), System.Windows.Threading.DispatcherPriority.Loaded);
         };
         var sync = new Button { Style = (Style)FindResource("Glass"), Content = "Sync now", Padding = new Thickness(16, 8, 16, 8), FontSize = 14, Margin = new Thickness(0, 4, 0, 0) };
         sync.Click += async (_, _) => await SyncLibrary(true);
         System.Windows.Automation.AutomationProperties.SetName(sync, "Sync now");
         p.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Children = { add, sync } });
 
-        p.Children.Add(new TextBlock { Text = "Anime, TV shows and movies all appear under Shows and Movies; anime openings and endings have their own section. New files are picked up automatically while Haku Player is open.",
+        p.Children.Add(new TextBlock { Text = "Each library is a tile on the home page; drag the tiles there to move them. A library can hold any mix of folders, and their tags become filters inside it. Folders can be laid out any way: shows inside other folders (A–Z, genres…), season folders, or loose files. New files are picked up automatically while Haku Player is open.",
             FontSize = 12.5, Foreground = (Brush)FindResource("Muted"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 14, 0, 0) });
-        p.Children.Add(new TextBlock { Text = "Details come from AniList for anime and Cinemeta (IMDb) for TV shows and movies.", FontSize = 12.5,
+        p.Children.Add(new TextBlock { Text = "Details come from AniList for anime and Cinemeta (IMDb) for TV shows and movies. Your own tags get the details of the kind they're read like.", FontSize = 12.5,
             Foreground = (Brush)FindResource("Muted"), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(4, 2, 0, 0) });
+
+        // new tag for a folder: its name, and which kind of folder it's read like
+        UIElement TagEditor(LibraryFolder f)
+        {
+            var sp = new StackPanel { Margin = new Thickness(12, 2, 0, 6) };
+            var nameBox = new TextBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Foreground = (Brush)FindResource("Text"), CaretBrush = Brushes.White,
+                FontSize = 14, Padding = new Thickness(14, 7, 14, 7), Width = 220, Text = newTagName };
+            System.Windows.Automation.AutomationProperties.SetName(nameBox, "New tag name");
+            nameBox.TextChanged += (_, _) => newTagName = nameBox.Text;
+            var create = new Button { Style = (Style)FindResource("Glass"), Content = "Add tag", Padding = new Thickness(14, 6, 14, 6), FontSize = 13.5, Margin = new Thickness(8, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+            System.Windows.Automation.AutomationProperties.SetName(create, "Add tag");
+            create.Click += async (_, _) =>
+            {
+                var n = newTagName.Trim();
+                if (n.Length == 0) { Toast("Give the tag a name"); return; }
+                if (LibraryFolder.Kinds.Any(k => k.Name.Equals(n, StringComparison.OrdinalIgnoreCase)) || S.Tags.Any(t => t.Name.Equals(n, StringComparison.OrdinalIgnoreCase))) { Toast("There's already a tag with that name"); return; }
+                S.Tags.Add(new TagDef { Name = n, Kind = newTagKind });
+                f.Tag = n; f.Kind = newTagKind;
+                tagEditor = null; newTagName = "";
+                await Rescan();
+            };
+            sp.Children.Add(new StackPanel { Orientation = Orientation.Horizontal, Children = { Field(nameBox), create } });
+            var like = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
+            like.Children.Add(new TextBlock { Text = "Read like", FontSize = 13, Foreground = (Brush)FindResource("Muted"), VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(2, 0, 10, 6) });
+            foreach (var (k, label) in LibraryFolder.Kinds)
+                like.Children.Add(Chip(label, newTagKind == k, $"New tag read like {label}", () => { newTagKind = k; BuildGlobalSettings(); }));
+            sp.Children.Add(like);
+            Dispatcher.BeginInvoke(() => nameBox.Focus(), System.Windows.Threading.DispatcherPriority.Loaded);
+            return sp;
+        }
         }
 
         void AppearancePage()
@@ -172,6 +281,7 @@ public partial class MainWindow
             swatches.Children.Add(btn);
         }
         p.Children.Add(swatches);
+        if (S.Theme == "custom") p.Children.Add(CustomColorPicker());
         Section(p, "Glass");
         Chips(p, "Glass clarity", new[] { (0, "Clear"), (1, "Balanced"), (2, "Frosted") }, S.Glass, v => Change(() => { S.Glass = v; ApplyGlass(); }));
 
@@ -276,6 +386,59 @@ public partial class MainWindow
         }
     }
 
+    // Custom theme colour: drag along the rainbow bar for a hue, or type an exact hex colour.
+    // Dragging recolours the app live; the settings page is rebuilt (and saved) when the drag ends.
+    UIElement CustomColorPicker()
+    {
+        const double W = 320, Knob = 22;
+        var current = Theme.Parse(S.CustomColor) ?? Color.FromRgb(0x2B, 0xA8, 0xFF);
+        var rainbow = new GradientStopCollection();
+        for (int i = 0; i <= 6; i++) rainbow.Add(new GradientStop(Theme.FromHsl(i * 60 % 360, 0.85, 0.58), i / 6.0));
+        var bar = new Border { Width = W, Height = 28, CornerRadius = new CornerRadius(14), Cursor = System.Windows.Input.Cursors.Hand, BorderThickness = new Thickness(1),
+            Background = new LinearGradientBrush(rainbow, new Point(0, 0), new Point(1, 0)), BorderBrush = (Brush)FindResource("GlassStroke") };
+        var knob = new System.Windows.Shapes.Ellipse { Width = Knob, Height = Knob, Stroke = Brushes.White, StrokeThickness = 3, Fill = new SolidColorBrush(current),
+            HorizontalAlignment = HorizontalAlignment.Left, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
+        void PlaceKnob(double hue) => knob.Margin = new Thickness(3 + hue / 360 * (W - Knob - 6), 0, 0, 0);
+        PlaceKnob(Theme.Hsl(current).H);
+        var hex = new TextBox { Background = Brushes.Transparent, BorderThickness = new Thickness(0), Foreground = (Brush)FindResource("Text"), CaretBrush = Brushes.White,
+            FontSize = 14, Padding = new Thickness(14, 7, 14, 7), Width = 120, Text = S.CustomColor };
+        System.Windows.Automation.AutomationProperties.SetName(hex, "Custom colour (hex)");
+        System.Windows.Automation.AutomationProperties.SetName(bar, "Custom colour hue");
+
+        void Pick(double x)
+        {
+            double hue = Math.Clamp((x - 3 - Knob / 2) / (W - Knob - 6), 0, 1) * 360;
+            var c = Theme.FromHsl(hue % 360, 0.85, 0.58);
+            S.CustomColor = hex.Text = Theme.Hex(c);
+            ((SolidColorBrush)knob.Fill).Color = c; PlaceKnob(hue);
+            Theme.Apply("custom");
+        }
+        void Commit() { S.Save(); MakeBlobs(); BuildGlobalSettings(); }
+        bar.MouseLeftButtonDown += (_, e) => { bar.CaptureMouse(); Pick(e.GetPosition(bar).X); e.Handled = true; };
+        bar.MouseMove += (_, e) => { if (bar.IsMouseCaptured) Pick(e.GetPosition(bar).X); };
+        bar.MouseLeftButtonUp += (_, _) => { if (bar.IsMouseCaptured) { bar.ReleaseMouseCapture(); Commit(); } };
+        void TypeHex()
+        {
+            var t = hex.Text.Trim();
+            if (!t.StartsWith('#')) t = "#" + t;
+            if (t.Equals(S.CustomColor, StringComparison.OrdinalIgnoreCase)) return; // also stops the rebuild re-firing this via LostFocus
+            if (t.Length != 7 || Theme.Parse(t) is not Color c) { Toast("Use a hex colour like #2BA8FF"); hex.Text = S.CustomColor; return; }
+            S.CustomColor = Theme.Hex(c);
+            Theme.Apply("custom");
+            Commit();
+        }
+        hex.KeyDown += (_, e) => { if (e.Key == System.Windows.Input.Key.Enter) { TypeHex(); e.Handled = true; } };
+        hex.LostFocus += (_, _) => TypeHex();
+
+        return new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 4, 0, 8), Children =
+        {
+            new Grid { Width = W, VerticalAlignment = VerticalAlignment.Center, Children = { bar, knob } },
+            new FrameworkElement { Width = 14 },
+            new Border { Child = hex, CornerRadius = new CornerRadius(16), Background = (Brush)FindResource("GlassFill"), BorderThickness = new Thickness(1),
+                BorderBrush = (Brush)FindResource("GlassStroke"), VerticalAlignment = VerticalAlignment.Center },
+        } };
+    }
+
     // Moving background on/off.
     void ApplyAppearance()
     {
@@ -284,7 +447,10 @@ public partial class MainWindow
     }
 
     // How much of the desktop shows through the main window's glass.
-    void ApplyGlass() => Tint.Background = new SolidColorBrush(Color.FromArgb(S.Glass switch { 0 => 0x80, 2 => 0xE2, _ => 0xB8 }, 0x0A, 0x0B, 0x10));
+    // In the player it's solid black: nothing behind the window may show through, even for the frame or two a resize
+    // leaves before mpv has drawn the video at the new size.
+    void ApplyGlass() => Tint.Background = Player.Visibility == Visibility.Visible ? Brushes.Black
+        : new SolidColorBrush(Color.FromArgb(S.Glass switch { 0 => 0x80, 2 => 0xE2, _ => 0xB8 }, 0x0A, 0x0B, 0x10));
 
     // ---------- little builders ----------
 

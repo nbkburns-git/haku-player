@@ -6,20 +6,20 @@ A tour of the parts that took the most figuring out. File names point at the sou
 flowchart LR
     subgraph App["HakuPlayer.exe (WPF, .NET 9)"]
         Main["Main window<br/>library · show pages · settings<br/><i>MainWindow, Library, Info</i>"]
-        Overlay["Controls overlay<br/>transparent, click-through window<br/><i>PlayerControls</i>"]
+        Controls["Player controls<br/>over the video, same window<br/><i>PlayerControls</i>"]
+        subgraph mpv["libmpv (in-process)"]
+            Video["D3D11 texture<br/>shown in a WPF D3DImage<br/><i>MpvVideo</i>"]
+            Shader["glass.glsl<br/>OUTPUT hook"]
+        end
         Data[("%LOCALAPPDATA%\Haku Player<br/>settings · watched · info · thumbs")]
-    end
-    subgraph mpv["mpv.exe"]
-        Video["video in a child window<br/>(--wid)"]
-        Shader["glass.glsl<br/>OUTPUT hook"]
     end
     FF["ffmpeg / ffprobe<br/>previews · fingerprints · lengths"]
     Web["AniList · AnimeThemes · Cinemeta<br/>AniSkip · TheIntroDB · IntroDB"]
 
     Main -- "JSON IPC (named pipe)" --> mpv
     mpv -- "time-pos, tracks, chapters…" --> Main
-    Overlay -- "glass rectangles<br/>glsl-shader-opts" --> Shader
-    Main --- Overlay
+    Controls -- "glass rectangles<br/>glsl-shader-opts" --> Shader
+    Main --- Controls
     Main --> FF
     Main --> Web
     Main --- Data
@@ -27,20 +27,22 @@ flowchart LR
 
 ## Embedding mpv
 
-mpv renders into a WinForms panel inside the WPF window (`--wid`) and is driven over its JSON IPC pipe
-(`\\.\pipe\animeplayer-<pid>-<n>`, a new one for each video). The app watches the properties it needs
-(`time-pos`, `pause`, `track-list`, `chapter-list`, `video-params/aspect`…) and sends commands back.
+mpv runs inside the app as a library (`lib\libmpv-2.dll`, `MpvVideo.cs`). It draws each frame with libmpv's Direct3D 11
+render API into a texture that's shared with a Direct3D 9 surface, which WPF shows in a `D3DImage`. The video is just
+another element in the window: the controls sit on top of it in the same window, and a resize redraws the current frame
+at the new size in the same layout pass, so the picture, the bars and the window always move together.
 
-Two Windows details needed workarounds:
+The app still drives mpv over its JSON IPC pipe (`\\.\pipe\animeplayer-<pid>-<n>`, a new one for each video). It watches
+the properties it needs (`time-pos`, `pause`, `track-list`, `chapter-list`, `video-params/aspect`…) and sends commands back.
+Keys are forwarded with `keypress`, so mpv's own shortcuts work. A click on the video pauses, a double-click goes
+fullscreen, and the cursor hides with the controls.
 
-- **Keyboard.** Focus never reaches mpv's window, because it belongs to another process. So while a video plays, the app forwards keys over IPC (`keypress`). Printable characters arrive through WPF's text input, so they match your keyboard layout.
-- **Mouse.** mpv passes the mouse through to the panel underneath, so the panel does the work: moving shows the controls, a click pauses, a double-click goes fullscreen, and it hides the cursor. Resizing from the window edges over the video uses the native hit-test codes.
+Launching the exe with a video (dragging one onto it) plays it straight away. If the app is already open, the new
+launch hands the path to that window over a named pipe and quits (`App.xaml.cs`), so you never get a second window.
 
 ## The liquid glass
 
-WPF can't draw on top of another process's window, so the controls live in their own **transparent, owned window** over the video. Its fully transparent pixels let clicks through to the video, and it never takes focus, so keys keep going to the main window.
-
-The glass itself is two layers:
+The glass over the video is two layers:
 
 1. **WPF** draws the tint, which adapts to how bright the scene is, plus the sheen, the specular rims and the shadow (`GlassSurface.cs`).
 2. **mpv** blurs the actual moving picture underneath (`Assets/glass.glsl`). A libplacebo `OUTPUT` hook takes up to four rounded rectangles: the bottom pill, the top bar, a menu, and the Skip/Up next card. Inside each one it applies a 48-tap golden-angle blur, a saturation and brightness lift, and a lens-like bend near the edge.
@@ -59,6 +61,12 @@ WPF draws on the next display refresh. The gap changes with load, so no amount o
 
 So during a fade-out, WPF draws the **whole** bar by itself from a blurred snapshot of the current frame, and mpv's blur is switched off at the start, hidden underneath until it catches up (`GlassHandoff.cs`). Bars fading back in use the live blur straight away, so you never see an old picture. Updates to mpv also go out one at a time: the next is only sent once mpv confirms the last, which stops them piling up in a queue.
 
+### Pop-ups and tooltips
+
+Pop-ups such as *What's missing* and tooltips share one glass panel (`GlassPanel` in `App.xaml`). Just before one opens,
+the app copies the bit of screen behind it and blurs that (`GlassFrost.cs`), a few milliseconds' work. Rendering the page
+itself for the blur took around 300 ms and made every tooltip stutter.
+
 ## Timeline previews
 
 `Thumbs.cs` runs ffmpeg in the background (CUDA decode and scale when available), producing one exact frame per second.
@@ -72,7 +80,7 @@ So during a fade-out, WPF draws the **whole** bar by itself from a blurred snaps
 2. **Online.** [AniSkip](https://aniskip.com) for anime, looked up by MyAnimeList id (taken from AniList) and episode number. For TV and movies, [TheIntroDB](https://theintrodb.org) v4, then [IntroDB](https://introdb.app), looked up by IMDb id, season and episode. Nothing found is checked again after a week.
 3. **Audio fingerprints.** The same method as Jellyfin's Intro Skipper. ffmpeg's Chromaprint muxer fingerprints the first ~7 minutes and the last ~5 minutes of this episode and of its neighbour in the same season (one value per 0.124 s). The app then slides one fingerprint across the other, looking for the longest run where values differ by at most 6 of 32 bits, allowing gaps of up to 3.5 s. A run of 15–240 s at the start is the opening; one at the end is the ending. On Code Geass this matched AniSkip's community times to within about a second. The files are read one at a time, because reading several places at once is slower on a hard disk.
 
-An episode counts as watched once playback reaches its ending (otherwise at 90%). Up next starts its 10-second countdown when the ending starts, counting playback time, so pausing pauses it.
+An episode counts as watched once playback reaches its ending (otherwise at 90%). Up next shows when the ending starts and counts down 10 seconds of playback, so pausing pauses it. The countdown starts when the card appears and restarts after a seek, so jumping deep into the ending still gives you time to choose.
 
 ## Matching shows
 

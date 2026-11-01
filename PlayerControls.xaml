@@ -1,14 +1,14 @@
-<Window x:Class="AnimePlayer.PlayerControls"
+﻿<UserControl x:Class="AnimePlayer.PlayerControls"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        WindowStyle="None" AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize"
-        ShowInTaskbar="False" ShowActivated="False" Foreground="{StaticResource Text}"
+        Foreground="{StaticResource Text}"
         FontFamily="Segoe UI Variable Display, Segoe UI">
-  <!-- Covers the whole video. Fully transparent pixels click through to it, so only the pills and preview take the mouse. -->
-  <Window.Resources>
+  <!-- Lies over the video, in the player's own window. It has no background, so the mouse reaches the video everywhere
+       except the bars, menu and card (and the bars stop taking it once they've faded out: SetShown). -->
+  <UserControl.Resources>
     <!-- a tight shadow behind text only, for legibility on bright scenes -->
     <DropShadowEffect x:Key="TextShadow" BlurRadius="6" ShadowDepth="0" Opacity="0.5"/>
-  </Window.Resources>
+  </UserControl.Resources>
   <Grid x:Name="Root" PreviewMouseDown="OnAnyMouseDown">
     <Canvas x:Name="PreviewLayer">
       <!-- Hover preview: glass card with the exact frame and its time -->
@@ -129,4 +129,4 @@
       </StackPanel>
     </ContentControl>
   </Grid>
-</Window>
+</UserControl>

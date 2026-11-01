@@ -22,7 +22,8 @@ static class Discord
     // details: show name; state: episode; image: an https poster url
     public static void Watching(string details, string state, bool paused, double position, double duration, string? image)
     {
-        var activity = new JsonObject { ["type"] = 3, ["details"] = Clip(details), ["state"] = Clip(paused ? $"Paused · {state}" : state) };
+        // status_display_type 2: the member list says the show ("South Park") instead of the app name
+        var activity = new JsonObject { ["type"] = 3, ["status_display_type"] = 2, ["details"] = Clip(details), ["state"] = Clip(paused ? $"Paused · {state}" : state) };
         if (!paused && duration > 0)
         {
             long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();

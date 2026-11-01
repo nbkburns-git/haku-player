@@ -86,6 +86,13 @@ sealed class Thumbs : IDisposable
     }
 
     // Exact frame for second t, or null if not decoded yet.
+    // Is second t decoded yet? (no picture made: Get decodes a JPEG every call)
+    public bool Has(double t)
+    {
+        int i = Math.Max(0, (int)Math.Round(t));
+        lock (wake) return i < slots.Length && slots[i] is { Length: > 0 };
+    }
+
     public BitmapSource? Get(double t)
     {
         int i = Math.Max(0, (int)Math.Round(t));

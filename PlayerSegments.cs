@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
@@ -17,7 +17,10 @@ public partial class PlayerControls
     List<Segment> segments = new();
     public string? NextTitle; // the next video's name, or null on the last one (set by the main window for each file)
     string promptKey = "";
+    double shownLeft = double.NaN; // the countdown number on screen
     bool upNextDismissed, upNextFired;
+    double? upNextFrom;     // playback time the Up next countdown started at (null: card not up)
+    double lastPromptTime;  // last position seen, to spot seeks
     readonly HashSet<Segment> autoSkipped = new();
     GlassSurface? promptGlass;
     TextBlock? countdownText;
@@ -32,6 +35,7 @@ public partial class PlayerControls
     {
         chapters = new(); segments = new();
         upNextDismissed = upNextFired = false;
+        upNextFrom = null;
         autoSkipped.Clear();
         SetPrompt("", null);
         DrawMarks();
@@ -77,14 +81,19 @@ public partial class PlayerControls
 
         // Up next: from the start of the ending (or the last 20 s when there's no ending known), counting down with playback
         double at = EndingStart ?? duration - 20;
+        bool jumped = Math.Abs(time - lastPromptTime) > 1.5; // a seek, not playback
+        lastPromptTime = time;
         if (S.UpNext && NextTitle != null && !upNextDismissed && duration > 120 && time >= at && (S.Autoplay || shown || time - at < 8))
         {
             SetPrompt("next", null);
-            double left = Math.Ceiling(10 - (time - at));
-            if (countdownText != null) countdownText.Text = S.Autoplay ? $"in {Math.Max(0, left)}" : "";
+            // 10 s from when the card came up (or from the latest seek), so seeking deep into the ending still gives you time to choose
+            if (upNextFrom == null || jumped || time < upNextFrom) upNextFrom = time;
+            double left = Math.Ceiling(10 - (time - upNextFrom.Value));
+            if (countdownText != null && left != shownLeft) { shownLeft = left; countdownText.Text = S.Autoplay ? $"in {Math.Max(0, left)}" : ""; } // once a second, not every frame
             if (S.Autoplay && left <= 0 && !upNextFired) { upNextFired = true; Send(new object[] { "playlist-next" }); }
             return;
         }
+        upNextFrom = null;
         // an ending that runs to the very end has nothing to skip to
         if (S.SkipButtons && seg != null && !(seg.Kind == "ed" && seg.End >= duration - 3) && (shown || time - seg.Start < 8))
         { SetPrompt($"skip:{seg.Kind}:{seg.Start}", seg); return; }
@@ -97,6 +106,7 @@ public partial class PlayerControls
         promptKey = key;
         PromptBody.Children.Clear();
         countdownText = null;
+        shownLeft = double.NaN;
         WatchGlass();
         if (key == "")
         {

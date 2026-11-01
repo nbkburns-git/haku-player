@@ -6,8 +6,8 @@
 
 **A liquid-glass media player for Windows, built for 4K anime.**
 
-Browse your anime, TV shows and movies like a streaming service, then watch them in mpv
-with live frosted-glass controls floating over the picture.
+Browse your anime, TV shows and movies like a streaming service, then watch them in mpv,
+built right into the window, with live frosted-glass controls floating over the picture.
 
 [![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)](#requirements) [![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/9.0) [![WPF](https://img.shields.io/badge/UI-WPF-68217A)](#how-it-works) [![mpv](https://img.shields.io/badge/player-mpv-691F69)](https://mpv.io) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
@@ -24,6 +24,7 @@ with live frosted-glass controls floating over the picture.
 - **Skip opening, skip ending, Up next.** Timings come from the file's chapters or from [AniSkip](https://aniskip.com) and [TheIntroDB](https://theintrodb.org). Failing that, Haku Player finds them itself by comparing the music of two episodes.
 - **Remembers what you've watched.** Watched ticks, progress bars, a *Continue watching* row and library stats.
 - **Your files, untouched.** It plays the originals at full quality through mpv (GPU decoding, no re-encoding) and never renames anything.
+- **Drop to play.** Drag a video or a folder onto the window, or onto `HakuPlayer.exe`, and it plays straight away. With the app already open, it plays in that window.
 
 ## Tour
 
@@ -71,7 +72,7 @@ The controls float over the video in two glass pills. They blur, brighten and be
     <td width="50%"><img src="docs/images/stats.png" alt="Library stats"/></td>
   </tr>
   <tr>
-    <td><b>Make it yours</b> · five accent themes, glass clarity and background motion. Separate language defaults for anime and for TV and movies, several library folders, and Discord status.</td>
+    <td><b>Make it yours</b> · five accent themes or a colour of your own (the logo follows it), glass clarity and background motion. Separate language defaults for anime and for TV and movies, several library folders, and Discord status.</td>
     <td><b>Stats</b> · library size and running time, time watched, a 14-day chart and your most-watched shows.</td>
   </tr>
 </table>
@@ -93,7 +94,7 @@ The controls float over the video in two glass pills. They blur, brighten and be
 <details>
 <summary><b>Player</b></summary>
 
-- mpv embedded in the window, with GPU decoding and the `high-quality` profile. Resumes where you left off (openings and endings always start from the top).
+- mpv built into the app (libmpv), drawing straight into the window, with GPU decoding and the `high-quality` profile. Resumes where you left off (openings and endings always start from the top).
 - Live liquid-glass controls (a GLSL shader on mpv's output). They hide after 2, 3 or 5 seconds, together with the cursor.
 - Timeline: exact-frame hover previews, chapter ticks, opening and ending marked. Previews decode outward from where you hover, on the GPU (CUDA) with a CPU fallback, and are cached.
 - Skip opening, ending and recap (optionally automatic), an Up next countdown and Autoplay.
@@ -107,7 +108,7 @@ The controls float over the video in two glass pills. They blur, brighten and be
 <summary><b>Watching</b></summary>
 
 - An episode counts as watched once you reach its ending (or 90% of the way in). Tick or untick by hand, per episode, season or show.
-- *Continue watching* row on the home screen: every show you're part-way through, or onto the next episode of.
+- *Continue watching* row on the home screen: every show you're part-way through, or onto the next episode of. Close a card to hide it until you next watch that show.
 - Stats: library size and running time, time watched (total and this week), a 14-day chart and most-watched shows.
 - Discord status, *"Watching Haku Player · Code Geass · S01E05"* with time left. Optional, and needs your own Discord application ID.
 </details>
@@ -118,7 +119,7 @@ The controls float over the video in two glass pills. They blur, brighten and be
 |---|---|
 | **Windows** | Windows 11 (22H2 or later, for the acrylic backdrop) |
 | **.NET** | [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0) (or the SDK to build) |
-| **mpv** | `winget install shinchiro.mpv` (found in `C:\Program Files\MPV Player` or on `PATH`) |
+| **libmpv** | To build: put `libmpv-2.dll` in `lib\` (see below). It's copied next to the exe, so nothing else to install |
 | **FFmpeg** | `winget install Gyan.FFmpeg` (`ffmpeg` / `ffprobe` on `PATH`), for previews, opening/ending detection and stats |
 | **GPU** | Any. NVIDIA cards decode timeline previews with CUDA; others fall back to the CPU |
 
@@ -127,6 +128,8 @@ The controls float over the video in two glass pills. They blur, brighten and be
 ```powershell
 git clone https://github.com/nbkburns-git/haku-player.git
 cd haku-player
+# libmpv (too big for the repo): from a shinchiro "mpv-dev-x86_64" build, https://github.com/shinchiro/mpv-winbuild-cmake/releases
+# extract libmpv-2.dll into lib\
 dotnet build -c Release
 .\bin\Release\net9.0-windows\HakuPlayer.exe
 ```
@@ -165,7 +168,7 @@ Everything Haku Player stores (settings, watch history, fetched details, covers,
 
 ## How it works
 
-The short version: a WPF window hosts mpv, which plays into a child window and is controlled over its JSON IPC pipe. The controls are a separate transparent window on top, and the blur under them is a shader running inside mpv.
+The short version: mpv runs inside the app as a library and draws each frame into a Direct3D texture that WPF shows like any other image, so the video, the controls and the window resize as one picture. The app drives mpv over its JSON IPC pipe, and the blur under the controls is a shader running inside mpv.
 [**docs/how-it-works.md**](docs/how-it-works.md) has the details: the glass shader, why fades are drawn by one renderer only, how openings are detected from audio fingerprints, and more.
 
 ## Privacy
@@ -178,7 +181,7 @@ turn it on, talks to the Discord app on your own PC.
 
 - [mpv](https://mpv.io) and [libplacebo](https://code.videolan.org/videolan/libplacebo) for playback and the shader hook; [FFmpeg](https://ffmpeg.org) and Chromaprint for previews and fingerprints.
 - [AniList](https://anilist.co), [AnimeThemes](https://animethemes.moe), [Cinemeta](https://v3-cinemeta.strem.io), [AniSkip](https://aniskip.com), [TheIntroDB](https://theintrodb.org) and [IntroDB](https://introdb.app) for their free APIs.
-- [Shippori Mincho](https://fonts.google.com/specimen/Shippori+Mincho) by FONTDASU, under the [SIL Open Font License](Assets/Fonts/OFL.txt).
+- [Outfit](https://github.com/Outfitio/Outfit-Fonts) by The Outfit Project Authors, under the [SIL Open Font License](Assets/Fonts/OFL-Outfit.txt).
 - Artwork in the screenshots belongs to its owners. The videos shown are the author's own 4K upscales.
 
 Haku Player plays files you already have; it doesn't include, find or download any videos.

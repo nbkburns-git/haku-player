@@ -6,3 +6,5 @@ publish/
 .vs/
 # old in-folder app data (now kept in %LOCALAPPDATA%\Haku Player)
 data/
+# libmpv (121 MB, over GitHub's file limit): download it, see README
+lib/*.dll

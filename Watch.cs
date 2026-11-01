@@ -25,6 +25,7 @@ public sealed class WatchData
     public Dictionary<string, WatchRec> Files { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, double> Days { get; set; } = new(); // "yyyy-MM-dd" -> seconds watched that day
     public bool Seeded { get; set; }
+    public Dictionary<string, DateTime> Hidden { get; set; } = new(StringComparer.OrdinalIgnoreCase); // show folder -> when it was closed from Continue watching
 }
 
 // Watch history (watched.json in the data folder): per-episode progress and watched ticks, Continue watching, stats.

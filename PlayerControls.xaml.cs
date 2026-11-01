@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -14,11 +14,22 @@ using System.Windows.Threading;
 
 namespace AnimePlayer;
 
-// Floating glass control bar, drawn in its own transparent window over the bottom of the video
-// (WPF can't draw over mpv's window directly). Talks to mpv through Send.
-public partial class PlayerControls : Window
+// Floating glass control bars over the video, in the player's own window (mpv draws into that window too, MpvVideo.cs).
+// Talks to mpv through Send.
+public partial class PlayerControls : UserControl
 {
+    public Window? Owner;
+    public event EventHandler? Closed;
+    // done with this video: off the screen, timers stopped
+    public void Close()
+    {
+        hideTimer.Stop(); // else it fires after we're gone and hides the cursor over the next video
+        (Parent as Panel)?.Children.Remove(this);
+        Closed?.Invoke(this, EventArgs.Empty);
+    }
+
     public Action<object[]> Send = _ => { };
+    public Action<string> Notify = _ => { }; // the app's glass toast
     public bool ResumeAllowed = true; // false for openings/endings: they always start from the top
     public event Action<bool>? ShownChanged; // main window hides the cursor with the bar
     public Action Back = () => { }, ActivateOwner = () => { }, Minimize = () => { }, ToggleMaximize = () => { }, CloseApp = () => { }, DragWindow = () => { };
@@ -46,13 +57,6 @@ public partial class PlayerControls : Window
         Loaded += (_, _) => ApplyDebug();
         hideTimer.Interval = TimeSpan.FromSeconds(S.HideAfter);
         hideTimer.Tick += (_, _) => { if (!paused && !dragging && !volDragging && openMenu == null && !Pill.IsMouseOver && !TopBar.IsMouseOver) SetShown(false); };
-        SourceInitialized += (_, _) =>
-        {
-            // Never take activation, so keyboard shortcuts keep going to the main window.
-            var h = new WindowInteropHelper(this).Handle;
-            SetWindowLong(h, -20, GetWindowLong(h, -20) | 0x08000000 /* WS_EX_NOACTIVATE */);
-            HwndSource.FromHwnd(h).AddHook(PassEdges);
-        };
         pillGlass = new GlassSurface(Pill, 34);
         topGlass = new GlassSurface(TopBar, 28);
         menuGlass = new GlassSurface(Menu, 18);
@@ -62,7 +66,6 @@ public partial class PlayerControls : Window
         // tell mpv's glass shader where the bars are, every frame while anything could be moving (see WatchGlass)
         Closed += (_, _) => { if (watchingGlass) System.Windows.Media.CompositionTarget.Rendering -= OnGlassFrame; watchingGlass = false; };
         SizeChanged += (_, _) => { WatchGlass(); CloseMenu(); }; // e.g. popping out: the menu would no longer fit where it was
-        LocationChanged += (_, _) => WatchGlass();
         Pill.SizeChanged += (_, _) => WatchGlass();
         TopBar.SizeChanged += (_, _) => WatchGlass();
         Menu.SizeChanged += (_, _) => WatchGlass();
@@ -72,9 +75,9 @@ public partial class PlayerControls : Window
             var pos = System.Windows.Forms.Cursor.Position;
             if (pos == lastPos) return;
             lastPos = pos;
-            if (!IsVisible) return;
-            var h = new WindowInteropHelper(this).Handle;
-            if (GetWindowRect(h, out var r) && pos.X >= r.L && pos.X < r.R && pos.Y >= r.T && pos.Y < r.B) Activity();
+            if (!IsVisible || PresentationSource.FromVisual(this) == null) return;
+            var a = PointToScreen(new Point(0, 0)); var b = PointToScreen(new Point(ActualWidth, ActualHeight));
+            if (pos.X >= a.X && pos.X < b.X && pos.Y >= a.Y && pos.Y < b.Y) Activity();
         };
         mouseWatch.Start();
         // If Windows takes the mouse away mid-drag (e.g. the bar hides or another window grabs it), don't stay "dragging".
@@ -129,7 +132,7 @@ public partial class PlayerControls : Window
     void PushGlass(object? s, EventArgs e)
     {
         if (!LiveGlass || Root.ActualWidth <= 0) return;
-        double W = Root.ActualWidth, H = Root.ActualHeight, k = Root.Opacity;
+        double W = Root.ActualWidth, H = Root.ActualHeight, k = glassOff ? 0 : Root.Opacity;
         // mpv's shader only covers the picture itself, not the side/top bars around a 4:3 video,
         // so positions are given relative to the picture (else the glass is squashed into it).
         double vw = W, vh = H, vx = 0, vy = 0;
@@ -173,6 +176,16 @@ public partial class PlayerControls : Window
         finally { glassBusy = false; }
     }
 
+    // Blur off in mpv while the window zooms (WindowZoom.cs): a picture of the video is taken without it.
+    bool glassOff;
+    public void SuspendGlass(bool off)
+    {
+        if (glassOff == off) return;
+        glassOff = off;
+        WatchGlass();
+        PushGlass(null, EventArgs.Empty);
+    }
+
     // Window is about to change size: fade the bars out, and back in once it settles.
     public void BeginTransition() { WatchGlass(); Root.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(90))); }
 
@@ -181,35 +194,13 @@ public partial class PlayerControls : Window
         WatchGlass();
         UpdateFrostViewbox();
         Root.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(220)) { BeginTime = TimeSpan.FromMilliseconds(60), EasingFunction = Ease });
-        Activity();
+        // no Activity(): the bars come back as they were (hidden stays hidden), and shown ones keep their hide timer
     }
 
     readonly DispatcherTimer mouseWatch = new() { Interval = TimeSpan.FromMilliseconds(80) };
     System.Drawing.Point lastPos;
-    [StructLayout(LayoutKind.Sequential)] struct WRECT { public int L, T, R, B; }
-    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out WRECT r);
-
     public Func<bool> Resizable = () => false;
     public string Kind = "anime"; // what's playing: picks the anime or the TV & movies language defaults
-
-    // The bars' soft shadows reach the window edges; without this they'd catch corner drags.
-    IntPtr PassEdges(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
-    {
-        if ((msg != 0x84 /* WM_NCHITTEST */ && msg != 0xA1 /* WM_NCLBUTTONDOWN */) || !Resizable() || Owner == null) return IntPtr.Zero;
-        var owner = new WindowInteropHelper(Owner).Handle;
-        if (msg == 0xA1)
-        {
-            if ((int)wParam is < 10 or > 17) return IntPtr.Zero;
-            handled = true;
-            PassPanel.StartResize(owner, wParam, lParam); // resize the player, not this overlay
-            return IntPtr.Zero;
-        }
-        if (!GetWindowRect(owner, out var r)) return IntPtr.Zero;
-        int code = PassPanel.EdgeCode(r.L, r.T, r.R, r.B, lParam, (int)Math.Ceiling(10 * VisualTreeHelper.GetDpi(this).DpiScaleX));
-        if (code == 0) return IntPtr.Zero;
-        handled = true;
-        return code;
-    }
 
     public Action PopOut = () => { };
     void OnPopOut(object s, RoutedEventArgs e) => PopOut();
@@ -220,8 +211,6 @@ public partial class PlayerControls : Window
         PopBtn.ToolTip = on ? "Back to the normal window" : "Pop out: small player that stays on top";
     }
 
-    [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr h, int i);
-    [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr h, int i, int v);
 
     // ---------- state from mpv / main window ----------
 
@@ -378,7 +367,14 @@ public partial class PlayerControls : Window
         hideTimer.Start();
     }
 
-    void OnActivity(object sender, MouseEventArgs e) => Activity();
+    System.Drawing.Point lastMove;
+    void OnActivity(object sender, MouseEventArgs e)
+    {
+        var p = System.Windows.Forms.Cursor.Position;
+        if (p == lastMove) return; // Windows re-sends moves when this window grows or moves under a still cursor (maximize)
+        lastMove = p;
+        Activity();
+    }
 
     // Bar fade (WPF tint, rims, icons; mpv's blur follows it). Ease-in-out: no long faint tail where the
     // blur, updated only at the video's frame rate, could visibly drift from the rest.
@@ -388,10 +384,11 @@ public partial class PlayerControls : Window
     {
         if (on == shown) return;
         shown = on;
-        if (on) Redraw(); // catch the timeline up (it isn't redrawn while hidden)
+        if (on) { Redraw(); UpdateFrost(); } // catch the timeline and the frosted backdrop up (neither is redrawn while hidden)
         WatchGlass();
         var d = TimeSpan.FromMilliseconds(on ? 220 : 300);
         // Opacity 0 = fully transparent pixels, which click through to the video. WPF draws the whole bar while it fades (GlassHandoff.cs).
+        Pill.IsHitTestVisible = TopBar.IsHitTestVisible = on; // faded out: the mouse goes to the video
         GlassFade(Pill, pillGlass, null, on ? 1 : 0, d, FadeEase);
         PillShift.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(on ? 0 : 18, d) { EasingFunction = Ease });
         GlassFade(TopBar, topGlass, null, on ? 1 : 0, d, FadeEase);
@@ -426,11 +423,14 @@ public partial class PlayerControls : Window
     {
         int s = (int)Math.Round(time);
         if (s == frostSecond || thumbs == null) return;
-        var img = thumbs.Get(s);
+        // nothing on screen uses the frost (bars, menu and Skip / Up next card all hidden): build nothing, just keep the
+        // decoder near playback so a frame is ready when the bars come back (SetShown(true) catches it up)
+        bool seen = shown || openMenu != null || promptKey != "";
+        var img = seen ? thumbs.Get(s) : null;
         if (img == null)
         {
             // not decoded yet (e.g. resuming mid-episode): nudge the decoder toward playback, unless someone's hovering
-            if ((DateTime.Now - lastFrostGrab).TotalSeconds >= 3) { lastFrostGrab = DateTime.Now; thumbs.Request(s, hover: false); }
+            if (!thumbs.Has(s) && (DateTime.Now - lastFrostGrab).TotalSeconds >= 3) { lastFrostGrab = DateTime.Now; thumbs.Request(s, hover: false); }
             return;
         }
         ApplyFrost(img, s);
@@ -595,7 +595,7 @@ public partial class PlayerControls : Window
             S.Save();
             Send(new object[] { "sub-add", copy, "select", System.IO.Path.GetFileNameWithoutExtension(copy) });
         }
-        catch (Exception ex) { MessageBox.Show(Owner, $"Couldn't add that subtitle file:\n{ex.Message}", "Haku Player"); }
+        catch (Exception ex) { Notify($"Couldn't add that subtitle file: {ex.Message}"); }
         Activity();
     }
 

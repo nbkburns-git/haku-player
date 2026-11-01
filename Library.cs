@@ -19,7 +19,7 @@ public partial class MainWindow
     bool filterFav;
     string sortMode = "az";     // az / new / top
     string? genre;
-    string? kindFilter; // "anime" / "tv" / "movie": only that kind (Shows and Movies)
+    string? kindFilter; // a tag ("Anime", "TV shows", your own…): only shows with it
     bool prefetching;
 
     // ---------- favourites ----------
@@ -67,7 +67,7 @@ public partial class MainWindow
     List<Entry> LibraryBase()
     {
         if (currentCategory == "All")
-            return lib.Values.SelectMany(x => x).OrderBy(x => x.Name, Natural.I).ToList();
+            return Everything(lib).OrderBy(x => x.Name, Natural.I).ToList();
         return CategoryList(currentCategory);
     }
 
@@ -77,7 +77,7 @@ public partial class MainWindow
         SearchHint.Visibility = q.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         IEnumerable<Entry> items = LibraryBase();
         if (filterFav) items = items.Where(x => !x.IsRandom && (IsFav(x) || x.Videos.Any(IsFav)));
-        if (kindFilter != null) items = items.Where(x => x.Kind == kindFilter);
+        if (kindFilter != null) items = items.Where(x => x.Tag == kindFilter);
         if (genre != null) items = items.Where(x => InfoService.Cached(x.InfoKey)?.Genres.Contains(genre) == true);
         if (q.Length > 0)
             items = items.Where(x => !x.IsRandom && Matches(x, q));
@@ -134,13 +134,14 @@ public partial class MainWindow
 
         Chip("All", !filterFav, () => filterFav = false);
         Chip("★ Favourites", filterFav, () => filterFav = true);
-        // Anime / TV shows / Movies, when this section mixes them; click again to show everything
-        var kinds = LibraryBase().Where(x => !x.IsRandom).Select(x => x.Kind).Distinct().ToList();
-        if (kinds.Count > 1)
+        // its tags (Anime / TV shows / Movies / your own), when this library mixes them; click again to show everything
+        var builtIn = LibraryFolder.Kinds.Select(k => k.Name).ToList();
+        var tags = LibraryBase().Where(x => !x.IsRandom && x.Tag.Length > 0).Select(x => x.Tag).Distinct()
+            .OrderBy(t => builtIn.IndexOf(t) is var i && i >= 0 ? i : 99).ThenBy(t => t, Natural.I).ToList();
+        if (tags.Count > 1)
         {
             Gap();
-            foreach (var (k, label) in new[] { ("anime", "Anime"), ("tv", "TV shows"), ("movie", "Movies") })
-                if (kinds.Contains(k)) Chip(label, kindFilter == k, () => kindFilter = kindFilter == k ? null : k);
+            foreach (var t in tags) Chip(t, kindFilter == t, () => kindFilter = kindFilter == t ? null : t);
         }
         Gap();
         Chip("A–Z", sortMode == "az", () => sortMode = "az");
@@ -188,7 +189,7 @@ public partial class MainWindow
             static bool OldPoster(Entry x) => x.Kind != "anime" && InfoService.Cached(x.InfoKey)?.CoverUrl?.Contains("metahub.space") == true;
             // TV details saved before episode names were kept: fetch once more to get them
             static bool NoEpisodeNames(Entry x) => x.Kind != "movie" && x.Unit == "episodes" && InfoService.Cached(x.InfoKey) is { EpisodeNames: null };
-            var todo = lib.Values.SelectMany(x => x).Where(x => !x.IsRandom)
+            var todo = Everything(lib).Where(x => !x.IsRandom)
                 .Where(x => InfoService.Cached(x.InfoKey) is not { Source: not null } || (x.Cover == null && InfoService.Cached(x.InfoKey)?.CoverUrl != null) || OldPoster(x) || NoEpisodeNames(x))
                 .ToList();
             if (todo.Count == 0) return;
@@ -221,7 +222,7 @@ public partial class MainWindow
         try
         {
             string target;
-            if (e.Kind == "anime")
+            if (e.Kind == "anime" && Directory.Exists(e.Folder)) // loose files have no folder of their own: like TV
             {
                 if (e.Folder.Length == 0 || Directory.EnumerateFiles(e.Folder, "cover.*").Any()) return false;
                 target = Path.Combine(e.Folder, "cover" + Path.GetExtension(new Uri(url).AbsolutePath));

@@ -3,60 +3,59 @@
 Add-Type -AssemblyName PresentationCore, PresentationFramework, WindowsBase
 $dir = $PSScriptRoot
 
+function Hex([string]$h, [int]$a = 255) {
+    [System.Windows.Media.Color]::FromArgb($a, [Convert]::ToByte($h.Substring(1,2),16), [Convert]::ToByte($h.Substring(3,2),16), [Convert]::ToByte($h.Substring(5,2),16))
+}
+function Brush([string]$h) { New-Object System.Windows.Media.SolidColorBrush((Hex $h)) }
+function VGrad([string]$a, [string]$b) {
+    $g = New-Object System.Windows.Media.LinearGradientBrush((Hex $a), (Hex $b), 90.0); return $g
+}
+function Poly($dc, [string]$pts, [string]$h) {
+    $p = $pts -split ' '
+    $dc.DrawGeometry((Brush $h), $null, [System.Windows.Media.Geometry]::Parse("M $($p[0]) L $($p[1..($p.Count-1)] -join ' ') Z"))
+}
+
+# Iceberg shaped like a play button, in a day-sky / deep-sea tile (design "I3").
+# Below 40 px a simpler two-tone iceberg is drawn: the facets turn to mush that small.
 function Draw([int]$size) {
     $s = $size / 256.0
     $dv = New-Object System.Windows.Media.DrawingVisual
     $dc = $dv.RenderOpen()
     $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform($s, $s)))
     $rect = New-Object System.Windows.Rect(8, 8, 240, 240)
-
-    # glass tile: pink -> violet -> blue
-    $grad = New-Object System.Windows.Media.LinearGradientBrush
-    $grad.StartPoint = '0,0'; $grad.EndPoint = '1,1'
-    $grad.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromRgb(0xFF,0x7A,0x8C), 0)))
-    $grad.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromRgb(0xC2,0x3B,0xD0), 0.55)))
-    $grad.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromRgb(0x3A,0x5B,0xFF), 1)))
-    $dc.DrawRoundedRectangle($grad, $null, $rect, 62, 62)
-
-    # soft light from the top-left
-    $glow = New-Object System.Windows.Media.RadialGradientBrush
-    $glow.Center = '0.25,0.15'; $glow.GradientOrigin = '0.25,0.1'; $glow.RadiusX = 0.8; $glow.RadiusY = 0.8
-    $glow.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromArgb(110,255,255,255), 0)))
-    $glow.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromArgb(0,255,255,255), 1)))
-    $dc.DrawRoundedRectangle($glow, $null, $rect, 62, 62)
-
-    # glossy sheen on the upper half
-    $sheen = New-Object System.Windows.Media.LinearGradientBrush
-    $sheen.StartPoint = '0,0'; $sheen.EndPoint = '0,1'
-    $sheen.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromArgb(70,255,255,255), 0)))
-    $sheen.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromArgb(0,255,255,255), 0.75)))
     $dc.PushClip((New-Object System.Windows.Media.RectangleGeometry($rect, 62, 62)))
-    $dc.DrawEllipse($sheen, $null, (New-Object System.Windows.Point(128, 40)), 170, 110)
+    $small = $size -lt 40
+    if ($small) {
+        $sea = if ($size -le 16) { 96 } else { 98 }
+        $dc.DrawRectangle((Brush '#4FB0DA'), $null, $rect)
+        $dc.DrawRectangle((Brush '#0A3F5E'), $null, (New-Object System.Windows.Rect(8, $sea, 240, (248 - $sea))))
+        if ($size -le 16) { $x = 16; $y = 14; $k = 224 / 256.0 } else { $x = 26; $y = 24; $k = 204 / 256.0 }
+        $dc.PushTransform((New-Object System.Windows.Media.MatrixTransform($k, 0, 0, $k, $x, $y)))
+        Poly $dc '56,93 56,18 88,46 100,40 171,93' '#DDF7FD'
+        Poly $dc '56,93 171,93 222,134 132,190 136,210 56,240' '#2A9ACB'
+        $dc.Pop()
+    } else {
+        $dc.DrawRectangle((VGrad '#2C8FC0' '#7DCFEA'), $null, $rect)
+        $dc.DrawRectangle((VGrad '#0E5F8E' '#062638'), $null, (New-Object System.Windows.Rect(8, 94, 240, 154)))
+        $k = 210 / 256.0
+        $dc.PushTransform((New-Object System.Windows.Media.MatrixTransform($k, 0, 0, $k, 23, 18)))
+        Poly $dc '66,38 80,60 66,92' '#F2FDFF'
+        Poly $dc '80,60 92,54 106,72 66,92' '#CDF3FA'
+        Poly $dc '106,72 155,92 66,92' '#A6E6F2'
+        Poly $dc '106,72 116,68 155,92' '#7FD3EA'
+        Poly $dc '66,92 155,92 120,124' '#3FB0D8'
+        Poly $dc '155,92 212,128 120,124' '#2A9ACB'
+        Poly $dc '66,92 120,124 66,160' '#2391C2'
+        Poly $dc '120,124 212,128 146,169 150,188 132,179 100,170' '#1A78AA'
+        Poly $dc '66,160 120,124 100,170' '#136896'
+        Poly $dc '66,160 100,170 132,179 103,197 108,216 92,204 72,232 66,220' '#0C5480'
+        $dc.Pop()
+    }
     $dc.Pop()
-
-    # glass edge
-    $edge = New-Object System.Windows.Media.LinearGradientBrush
-    $edge.StartPoint = '0,0'; $edge.EndPoint = '0,1'
-    $edge.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromArgb(170,255,255,255), 0)))
-    $edge.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromArgb(30,255,255,255), 1)))
-    $inner = New-Object System.Windows.Rect(10, 10, 236, 236)
-    $dc.DrawRoundedRectangle($null, (New-Object System.Windows.Media.Pen($edge, 3)), $inner, 60, 60)
-
-    # soft white play symbol (rounded corners), with a faint shadow
-    $tri = [System.Windows.Media.Geometry]::Parse("M 104,78 L 104,178 L 186,128 Z")
-    $shadowPen = New-Object System.Windows.Media.Pen((New-Object System.Windows.Media.SolidColorBrush([System.Windows.Media.Color]::FromArgb(60,40,0,80))), 34)
-    $shadowPen.LineJoin = 'Round'
-    $dc.PushTransform((New-Object System.Windows.Media.TranslateTransform(0, 6)))
-    $dc.DrawGeometry($shadowPen.Brush, $shadowPen, $tri)
-    $dc.Pop()
-    $white = [System.Windows.Media.Brushes]::White
-    $pen = New-Object System.Windows.Media.Pen($white, 34); $pen.LineJoin = 'Round'
-    $dc.DrawGeometry($white, $pen, $tri)
-
-    # sparkle (four-point star), top right
-    $star = [System.Windows.Media.Geometry]::Parse("M 196,44 Q 199,61 214,64 Q 199,67 196,84 Q 193,67 178,64 Q 193,61 196,44 Z")
-    $dc.DrawGeometry($white, $null, $star)
-    $dc.DrawEllipse($white, $null, (New-Object System.Windows.Point(220, 92)), 4, 4)
+    if (-not $small) {
+        $rim = New-Object System.Windows.Media.Pen((New-Object System.Windows.Media.SolidColorBrush((Hex '#7FDCEB' 90))), 3)
+        $dc.DrawRoundedRectangle($null, $rim, (New-Object System.Windows.Rect(9.5, 9.5, 237, 237)), 60.5, 60.5)
+    }
 
     $dc.Pop(); $dc.Close()
     $bmp = New-Object System.Windows.Media.Imaging.RenderTargetBitmap($size, $size, 96, 96, [System.Windows.Media.PixelFormats]::Pbgra32)

@@ -38,10 +38,10 @@ public partial class MainWindow
             _ = PrefetchDetails();
 
             // what changed
-            string Diff(string key, string seriesWord, string videoWord)
+            string Diff(bool themes, string seriesWord, string videoWord)
             {
-                var o = old.GetValueOrDefault(key) ?? new();
-                var n = fresh[key];
+                var o = Everything(old).Where(e => (e.Unit == "themes") == themes).ToList();
+                var n = Everything(fresh).Where(e => (e.Unit == "themes") == themes).ToList();
                 int newSeries = n.Count(e => o.All(x => x.Name != e.Name));
                 int goneSeries = o.Count(e => n.All(x => x.Name != e.Name));
                 int newVideos = Math.Max(0, n.Sum(e => e.Videos.Count) - o.Sum(e => e.Videos.Count));
@@ -51,7 +51,7 @@ public partial class MainWindow
                 if (goneSeries > 0) parts.Add($"{goneSeries} {seriesWord}{(goneSeries == 1 ? "" : "s")} removed");
                 return string.Join(" · ", parts);
             }
-            var msg = string.Join(" · ", new[] { Diff("Shows", "show", "episode"), Diff("Openings", "series", "theme") }.Where(x => x.Length > 0))
+            var msg = string.Join(" · ", new[] { Diff(false, "show", "episode"), Diff(true, "series", "theme") }.Where(x => x.Length > 0))
                 .Replace("seriess", "series");
             if (msg.Length > 0) Toast($"Library synced · {msg}");
             else if (manual) Toast("Library is up to date");
@@ -67,12 +67,7 @@ public partial class MainWindow
     // Push the (re)scanned library into whatever is on screen.
     void ApplyLibrary()
     {
-        BuildWall(ShowsWall, lib["Shows"]);
-        BuildWall(OpsWall, lib["Openings"]);
-        int shows = lib["Shows"].Count(x => x.Kind != "movie"), movies = lib["Shows"].Count(x => x.Kind == "movie"), themes = lib["Openings"].Sum(x => x.Videos.Count);
-        ShowsCount.Text = string.Join(" · ", new[] { shows > 0 ? $"{shows} show{(shows == 1 ? "" : "s")}" : null, movies > 0 ? $"{movies} movie{(movies == 1 ? "" : "s")}" : null }
-            .Where(x => x != null).DefaultIfEmpty("Nothing yet"));
-        OpsCount.Text = $"{lib["Openings"].Count} series · {themes} theme{(themes == 1 ? "" : "s")}";
+        BuildTiles();
         UpdateContinue();
         if (Library.IsVisible && currentCategory != "") ApplyFilter();
         if (Detail.IsVisible && Detail.DataContext is Entry cur)
@@ -85,8 +80,8 @@ public partial class MainWindow
     List<Entry> CategoryList(string key)
     {
         var list = lib.GetValueOrDefault(key) ?? new();
-        if (key == "Openings" && list.Count > 0)
-            list = list.Prepend(new Entry("Random", null, list.SelectMany(x => x.Videos).ToList(), "themes", true)).ToList();
+        if (list.Where(x => x.Unit == "themes").SelectMany(x => x.Videos).ToList() is { Count: > 0 } themes) // a shuffle of this library's openings
+            list = list.Prepend(new Entry("Random", null, themes, "themes", true)).ToList();
         return list;
     }
 
@@ -103,12 +98,12 @@ public partial class MainWindow
             if (ext.Length > 0 && !WatchedExt.Contains(ext)) return; // ignore temp files etc. (folders have no extension)
             Dispatcher.BeginInvoke(() => { syncDebounce.Stop(); syncDebounce.Start(); });
         };
-        foreach (var lf in Locations)
+        foreach (var dir in Libs.SelectMany(l => l.Folders).Select(f => f.Path.TrimEnd('\\')).Distinct(StringComparer.OrdinalIgnoreCase))
         {
-            if (!Directory.Exists(lf.Path)) continue;
+            if (!Directory.Exists(dir)) continue;
             try
             {
-                var w = new FileSystemWatcher(lf.Path) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName };
+                var w = new FileSystemWatcher(dir) { IncludeSubdirectories = true, NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName };
                 w.Created += changed;
                 w.Deleted += changed;
                 w.Renamed += (s, e) => changed(s, e);

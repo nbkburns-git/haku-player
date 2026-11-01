@@ -34,7 +34,8 @@ public record Video(string Path, string Title, int N, int Season = 0, int Ep = 0
 
 // Kind: "anime", "tv" or "movie". Folder is the series folder (the first one, for a TV show split over several),
 // or the file itself for a movie sitting loose in the movies folder.
-public record Entry(string Name, ImageSource? Cover, List<Video> Videos, string Unit, bool IsRandom = false, string Folder = "", string Kind = "anime")
+// Tag: the tag of the library folder it came from (filter chips on the library page).
+public record Entry(string Name, ImageSource? Cover, List<Video> Videos, string Unit, bool IsRandom = false, string Folder = "", string Kind = "anime", string Tag = "")
 {
     // cache key for details: anime keeps its plain name (shared by a show and its openings)
     public string InfoKey => Kind == "anime" ? Name : $"{Kind}-{Name}";
@@ -43,18 +44,23 @@ public record Entry(string Name, ImageSource? Cover, List<Video> Videos, string 
 
 public partial class MainWindow : Window
 {
-    // Library locations: a command-line arg (one anime folder, for testing), else the ones set in Settings.
-    static readonly string? ArgRoot = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault();
-    static IEnumerable<LibraryFolder> Locations => ArgRoot != null
-        ? new[] { new LibraryFolder { Path = ArgRoot, Kind = "anime" } }
-        : Settings.Current.Libraries.ToArray();
+    // Libraries: a command-line arg (one anime folder with Anime Shows / Anime Openings, for testing), else the ones set in Settings.
+    static readonly string? Arg = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault();
+    static readonly string? ArgRoot = Arg != null && Directory.Exists(Arg) ? Arg : null;
+    static readonly string? ArgFile = Arg != null && File.Exists(Arg) ? Arg : null; // "Open with" / a video dropped on the exe: play it
+    static readonly List<MediaLibrary> ArgLibs = ArgRoot == null ? new() : new()
+    {
+        new() { Id = "shows", Name = "Shows and Movies", Folders = { new() { Path = ArgRoot, Kind = "anime" } } },
+        new() { Id = "themes", Name = "Openings / Endings", Folders = { new() { Path = ArgRoot, Kind = "themes" } } },
+    };
+    static List<MediaLibrary> Libs => ArgRoot != null ? ArgLibs : Settings.Current.Libs;
     static readonly string[] VideoExt = { ".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v" };
     static readonly string[] CoverExt = { ".png", ".jpg", ".jpeg", ".webp", ".bmp" };
     static readonly string DataDir = Settings.DataDir; // %LOCALAPPDATA%\Haku Player
     public static readonly string GlassShader = Path.Combine(AppContext.BaseDirectory, "Assets", "glass.glsl");
 
     Dictionary<string, List<Entry>> lib = new();
-    Process? mpv;
+    MpvVideo? mpv;
     StreamWriter? ipc;
     PlayerControls? controls;
     UIElement returnTo = null!; // page to go back to when playback ends
@@ -70,6 +76,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Loaded += async (_, _) => await LoadLibrary();
+        AllowDrop = true; // drop videos anywhere to play them (DropPlay.cs)
+        DragEnter += OnDragFilesEnter; DragOver += OnDragFiles; Drop += OnDropFiles;
         LocationChanged += (_, _) => PlaceControls();
         VideoHost.SizeChanged += (_, _) => { PlaceControls(); UpdateFill(); };
         SourceInitialized += (_, _) =>
@@ -80,7 +88,6 @@ public partial class MainWindow : Window
         StateChanged += (_, _) => { FitMaximized(); UpdateBlobs(); };
         Activated += (_, _) => UpdateBlobs();
         Deactivated += (_, _) => UpdateBlobs();
-        RoundClip(ShowsBody, 28); RoundClip(OpsBody, 28);
         // loading screen: spinning ring + breathing logo (stopped again in HideSplash)
         SplashRot.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1.4)) { RepeatBehavior = RepeatBehavior.Forever });
         var pulse = new DoubleAnimation(0.94, 1.04, TimeSpan.FromSeconds(0.9)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut } };
@@ -94,31 +101,37 @@ public partial class MainWindow : Window
         returnTo = Detail;
         Watch.Changed += () => Dispatcher.BeginInvoke(RefreshWatchViews);
 
-        // mpv lets mouse input fall through to our panel, so the panel drives the bar, cursor and clicks.
-        VideoPanel.MouseMove += (_, e) =>
+        // The video is part of this window: it drives the bar, cursor and clicks. (Resize edges come from WindowChrome.)
+        VideoHost.MouseMove += (_, e) =>
         {
             var p = System.Windows.Forms.Cursor.Position;
             if (p == lastMouse) return; // Windows re-sends moves when windows change under a still cursor
             lastMouse = p;
             controls?.Activity();
         };
-        VideoPanel.MouseWheel += (_, e) => controls?.Wheel(e.Delta);
-        // resize grabs over the video: a 10px band at the window edge (none when fullscreen or maximized)
-        VideoPanel.EdgeSize = () => fullscreen || WindowState == WindowState.Maximized ? 0 : (int)Math.Ceiling(10 * VisualTreeHelper.GetDpi(this).DpiScaleX);
-        VideoPanel.MouseDown += (_, _) => SetFocus(Hwnd); // keep keys flowing to us
-        VideoPanel.MouseClick += (_, e) =>
+        VideoHost.MouseWheel += (_, e) => controls?.Wheel(e.Delta);
+        VideoHost.MouseLeftButtonDown += (_, e) =>
         {
-            if (e.Button != System.Windows.Forms.MouseButtons.Left) return;
+            if (e.ClickCount == 2)
+            {
+                if (menuJustClosed) return;
+                Send(new object[] { "cycle", "pause" }); // undo the single click's pause
+                Send(new object[] { "cycle", "fullscreen" });
+                return;
+            }
             if (controls?.CloseMenu() == true) { menuJustClosed = true; return; }
             menuJustClosed = false;
             Send(new object[] { "cycle", "pause" });
         };
-        VideoPanel.MouseDoubleClick += (_, e) =>
-        {
-            if (e.Button != System.Windows.Forms.MouseButtons.Left || menuJustClosed) return;
-            Send(new object[] { "cycle", "pause" }); // undo the single click's pause
-            Send(new object[] { "cycle", "fullscreen" });
-        };
+        VideoHost.SizeChanged += (_, _) => SizeVideo();
+    }
+
+    // mpv draws at the video area's real pixel size, in the same layout pass
+    void SizeVideo()
+    {
+        if (mpv == null) return;
+        var dpi = VisualTreeHelper.GetDpi(this);
+        mpv.SetSize((int)Math.Round(VideoHost.ActualWidth * dpi.DpiScaleX), (int)Math.Round(VideoHost.ActualHeight * dpi.DpiScaleY));
     }
 
     // ---------- Window chrome & glass ----------
@@ -129,13 +142,6 @@ public partial class MainWindow : Window
     [DllImport("user32.dll")] static extern IntPtr CreateCursor(IntPtr inst, int x, int y, int w, int h, byte[] and, byte[] xor);
     [DllImport("user32.dll")] static extern IntPtr WindowFromPoint(System.Drawing.Point p);
     [DllImport("user32.dll")] static extern bool IsChild(IntPtr parent, IntPtr child);
-    bool OverVideo()
-    {
-        var h = WindowFromPoint(System.Windows.Forms.Cursor.Position);
-        return h == VideoPanel.Handle || IsChild(VideoPanel.Handle, h); // mpv's own window sits inside the panel
-    }
-    static readonly System.Windows.Forms.Cursor BlankCursor =
-        new(CreateCursor(IntPtr.Zero, 0, 0, 32, 32, Enumerable.Repeat((byte)0xFF, 128).ToArray(), new byte[128]));
 
     IntPtr Hwnd => new WindowInteropHelper(this).Handle;
 
@@ -175,7 +181,6 @@ public partial class MainWindow : Window
         else Shell.Margin = new Thickness(0);
     }
 
-    // Resize edges over the video are computed live by VideoPanel.EdgeSize (set up in the constructor).
     void UpdatePanelEdge() { }
 
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
@@ -195,20 +200,18 @@ public partial class MainWindow : Window
     }
 
     void OnMinimize(object s, RoutedEventArgs e) => WindowState = WindowState.Minimized;
-    // Maximize / restore: Windows' own animation everywhere (it animates a snapshot, so it's smooth
-    // whatever the page holds). Only fullscreen uses the fade to black. In the player, the floating
-    // bars (a separate window Windows doesn't animate) fade out for the move and come back after.
-    async void OnMaximize(object s, RoutedEventArgs e)
+    // Maximize / restore: Windows' own animation, everywhere. The video and the bars are part of this one window now
+    // (MpvVideo.cs), so Windows' snapshot of it has them in it, and the new size is drawn in one go.
+    void OnMaximize(object s, RoutedEventArgs e)
     {
         if (fullscreen) return;
-        Dwm(3, 0);
-        controls?.BeginTransition();
+        WindowAnimations();
         WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
-        if (controls == null) return;
-        await System.Threading.Tasks.Task.Delay(260); // Windows' animation length
         PlaceControls();
-        controls?.EndTransition();
     }
+
+    // Windows' minimize / maximize animation: always on (it used to be off in the player: mpv's own window wasn't in its snapshot).
+    void WindowAnimations() => Dwm(3 /* DWMWA_TRANSITIONS_FORCEDISABLED */, 0);
 
     // ---------- smooth size changes ----------
 
@@ -286,7 +289,7 @@ public partial class MainWindow : Window
         cover.Hide();
         controls?.EndTransition();
         covering = false;
-        Dispatcher.BeginInvoke(() => Dwm(3, 0), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+        Dispatcher.BeginInvoke(WindowAnimations, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
     }
 
     // Glide the window to a new rectangle (ease-out, ~1/4 s). Player bars fade out meanwhile so they never lag.
@@ -309,13 +312,13 @@ public partial class MainWindow : Window
             done?.Invoke();
             PlaceControls();
             controls?.EndTransition();
-            Dispatcher.BeginInvoke(() => Dwm(3, 0), System.Windows.Threading.DispatcherPriority.ApplicationIdle);
+            Dispatcher.BeginInvoke(WindowAnimations, System.Windows.Threading.DispatcherPriority.ApplicationIdle);
         };
         CompositionTarget.Rendering += animTick;
     }
     void OnCloseWindow(object s, RoutedEventArgs e) => Close();
 
-    readonly List<AnimationClock> blobClocks = new();
+    readonly List<Drift> blobClocks = new();
 
     bool blobsScrolling;
 
@@ -324,15 +327,16 @@ public partial class MainWindow : Window
     {
         bool run = Settings.Current.MovingBackground && !blobsScrolling && !Player.IsVisible
                    && (IsActive || Settings.Current.MovingAlways) && WindowState != WindowState.Minimized;
-        foreach (var c in blobClocks) { if (run) c.Controller?.Resume(); else c.Controller?.Pause(); }
+        foreach (var c in blobClocks) { if (run) c.Go(); else c.Hold(); }
         bool walls = run && Home.IsVisible; // cover walls only drift on the home page
-        foreach (var c in wallClocks.Values.SelectMany(x => x)) { if (walls) c.Controller?.Resume(); else c.Controller?.Pause(); }
+        foreach (var (canvas, clocks) in wallClocks) // tiles on another page of libraries stay still
+            foreach (var c in clocks) { if (walls && canvas.IsVisible) c.Go(); else c.Hold(); }
     }
 
     // Slow drifting colour blobs behind the glass: the "liquid" part.
     void MakeBlobs()
     {
-        foreach (var c0 in blobClocks) c0.Controller?.Stop();
+        foreach (var c0 in blobClocks) c0.End();
         blobClocks.Clear();
         Blobs.Children.Clear();
         var (ta, tb, tc) = Theme.Colors(Settings.Current.Theme);
@@ -359,11 +363,8 @@ public partial class MainWindow : Window
             var ay = new DoubleAnimation(0, b.Dy, TimeSpan.FromSeconds(b.Secs * 0.8)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = ease };
             // slow drift looks the same at 30 fps and costs half of 60
             Timeline.SetDesiredFrameRate(ax, 30); Timeline.SetDesiredFrameRate(ay, 30);
-            var cx = ax.CreateClock();
-            var cy = ay.CreateClock();
-            tt.ApplyAnimationClock(TranslateTransform.XProperty, cx);
-            tt.ApplyAnimationClock(TranslateTransform.YProperty, cy);
-            blobClocks.Add(cx); blobClocks.Add(cy);
+            blobClocks.Add(new Drift(tt, TranslateTransform.XProperty, ax));
+            blobClocks.Add(new Drift(tt, TranslateTransform.YProperty, ay));
             Blobs.Children.Add(e);
             void Place() { Canvas.SetLeft(e, b.X * Blobs.ActualWidth - 200); Canvas.SetTop(e, b.Y * Blobs.ActualHeight - 200); }
             Place();
@@ -374,14 +375,8 @@ public partial class MainWindow : Window
     // Keep the control-bar window glued to the bottom of the video area.
     void PlaceControls()
     {
-        if (controls == null || !VideoHost.IsVisible || dragSizing) return;
-        var fromDevice = PresentationSource.FromVisual(this)!.CompositionTarget.TransformFromDevice;
-        var topLeft = fromDevice.Transform(VideoHost.PointToScreen(new Point(0, 0)));
-        controls.SetHostHeight(VideoHost.ActualHeight);
-        controls.Width = VideoHost.ActualWidth;
-        controls.Height = VideoHost.ActualHeight;
-        controls.Left = topLeft.X;
-        controls.Top = topLeft.Y + VideoHost.ActualHeight - controls.Height;
+        if (controls == null || !VideoHost.IsVisible) return;
+        controls.SetHostHeight(VideoHost.ActualHeight); // the bars lie over the video in the same grid: only the glass needs telling
     }
 
     // ---------- Library ----------
@@ -389,11 +384,31 @@ public partial class MainWindow : Window
     async Task LoadLibrary()
     {
         lib = await Task.Run(ScanAll);
-        Watch.Seed(lib["Shows"].SelectMany(e => e.Videos)); // first run: resume points mpv already saved
+        Watch.Seed(Everything(lib).Where(e => e.Unit != "themes").SelectMany(e => e.Videos)); // first run: resume points mpv already saved
         ApplyLibrary();
         StartWatcher();
         HideSplash();
+        if (ArgFile != null && IsVideo(ArgFile)) PlayFiles(new() { Path.GetFullPath(ArgFile) });
+        ListenForOpens();
         _ = PrefetchDetails(); // details, banners and missing covers for anything new
+    }
+
+    // Videos handed over by a second launch (App.OnStartup): play them here.
+    async void ListenForOpens()
+    {
+        while (true)
+        {
+            try
+            {
+                using var s = new NamedPipeServerStream(App.InstanceKey, PipeDirection.In, 1, PipeTransmissionMode.Byte, PipeOptions.Asynchronous);
+                await s.WaitForConnectionAsync();
+                var path = await new StreamReader(s).ReadLineAsync();
+                if (path == null || !File.Exists(path) || !IsVideo(path)) continue;
+                if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+                PlayFiles(new() { path });
+            }
+            catch { await Task.Delay(1000); }
+        }
     }
 
     // A tiny, pre-blurred copy of a cover: stretched over the page it reads as a soft colour glow,
@@ -448,33 +463,42 @@ public partial class MainWindow : Window
         Show(Home);
     }
 
-    // Every library location: anime shows, TV shows and movies all go under "Shows" (Shows and Movies on the home page).
+    // Every library, keyed by its id: the shows in all its folders, each tagged with its folder's tag.
     static Dictionary<string, List<Entry>> ScanAll()
     {
-        var shows = new List<Entry>();
-        var ops = new List<Entry>();
-        foreach (var lf in Locations)
+        var scanned = new Dictionary<(string, string), List<Entry>>(); // a folder in two libraries is read once
+        var result = new Dictionary<string, List<Entry>>();
+        foreach (var l in Libs.ToList())
         {
-            try
+            var list = new List<Entry>();
+            foreach (var f in l.Folders.ToList())
             {
-                switch (lf.Kind)
+                var key = (f.Path.TrimEnd('\\').ToLowerInvariant(), f.Kind);
+                if (!scanned.TryGetValue(key, out var got))
                 {
-                    case "tv": shows.AddRange(ScanTv(lf.Path)); break;
-                    case "movie": shows.AddRange(ScanMovies(lf.Path)); break;
-                    default:
-                        shows.AddRange(Scan(Path.Combine(lf.Path, "Anime Shows"), "episodes"));
-                        ops.AddRange(Scan(Path.Combine(lf.Path, "Anime Openings"), "themes"));
-                        break;
+                    try { got = ScanFolder(f); } catch { got = new(); } // a drive that isn't plugged in: skip it, keep the rest
+                    scanned[key] = got;
                 }
+                list.AddRange(got.Select(e => e with { Tag = f.TagName }));
             }
-            catch { } // a drive that isn't plugged in: skip it, keep the rest
+            result[l.Id] = list.DistinctBy(e => (e.Folder, e.Unit)).OrderBy(e => e.Name, Natural.I).ToList();
         }
-        return new()
-        {
-            ["Shows"] = shows.OrderBy(e => e.Name, Natural.I).ToList(),
-            ["Openings"] = ops.OrderBy(e => e.Name, Natural.I).ToList(),
-        };
+        return result;
     }
+
+    static List<Entry> ScanFolder(LibraryFolder f) => f.Kind switch
+    {
+        "tv" => ScanTv(f.Path),
+        "movie" => ScanMovies(f.Path),
+        "themes" => Scan(Inner(f.Path, "Anime Openings"), "themes"),
+        _ => Scan(Inner(f.Path, "Anime Shows"), "episodes"),
+    };
+
+    // a whole anime folder (Anime Shows + Anime Openings inside) works too: use the part that fits
+    static string Inner(string dir, string sub) => Directory.Exists(Path.Combine(dir, sub)) ? Path.Combine(dir, sub) : dir;
+
+    // every show once, even when it's in more than one library
+    static IEnumerable<Entry> Everything(Dictionary<string, List<Entry>> l) => l.Values.SelectMany(x => x).DistinctBy(e => (e.Folder, e.Unit));
 
     static readonly RegexOptions I = RegexOptions.IgnoreCase;
 
@@ -537,64 +561,72 @@ public partial class MainWindow : Window
         return rest.Length > 1 ? $"{code} · {rest}" : code;
     }
 
-    // TV shows: one folder per show or per season; seasons of the same show ("Rick.and.Morty.S01…", "Rick and Morty Season 9") merge.
+    // TV shows: show folders found by Crawl (any depth), plus loose episodes grouped by show; seasons of the same show
+    // in separate folders ("Rick.and.Morty.S01…", "Rick and Morty Season 9") merge.
     static List<Entry> ScanTv(string dir)
     {
-        if (!Directory.Exists(dir)) return new();
-        return Directory.GetDirectories(dir)
-            .GroupBy(d => CleanTitle(Path.GetFileName(d)).Title, StringComparer.OrdinalIgnoreCase)
+        var (shows, loose) = Crawl(dir, false);
+        var items = shows.Select(d => (Key: CleanTitle(Path.GetFileName(d)).Title, Folder: d, Files: (List<string>?)null))
+            .Concat(LooseShows(loose, false).Select(g => (Key: CleanTitle(g.Name).Title, g.Folder, Files: (List<string>?)g.Files)));
+        return items
+            .GroupBy(x => x.Key, StringComparer.OrdinalIgnoreCase)
             .AsParallel()
             .Select(g =>
             {
-                var folders = g.OrderBy(Path.GetFileName, Natural.I).ToList();
-                var videos = folders.SelectMany(VideosIn).OrderBy(EpisodeOrder).ThenBy(f => f, Natural.I)
+                var parts = g.OrderBy(x => x.Files != null).ThenBy(x => Path.GetFileName(x.Folder), Natural.I).ToList(); // real folders first
+                var videos = parts.SelectMany(x => x.Files ?? VideosIn(x.Folder)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(EpisodeOrder).ThenBy(f => f, Natural.I)
                     .Select((f, i) => WithSeason(new Video(f, EpisodeTitle(f), i + 1))).ToList();
-                var e = new Entry(g.Key, null, videos, "episodes", false, folders[0], "tv");
+                var e = new Entry(g.Key, null, videos, "episodes", false, parts[0].Folder, "tv");
                 NameEpisodes(e);
-                return e with { Cover = LoadCover(folders[0]) ?? LoadCoverFile(CoverFile(e.InfoKey)) };
+                return e with { Cover = LoadCover(parts[0].Folder) ?? LoadCoverFile(CoverFile(e.InfoKey)) };
             })
             .Where(e => e.Videos.Count > 0)
             .ToList();
     }
 
-    // Movies: a folder per movie (biggest file first: the film, then any extras) or a video file on its own.
+    // Movies: a folder per movie (biggest file first: the film, then any extras) or a video file on its own,
+    // at any depth; a folder of several full-length films is a collection (one movie each).
     static List<Entry> ScanMovies(string dir)
     {
-        if (!Directory.Exists(dir)) return new();
-        var folders = Directory.GetDirectories(dir).Select(d => (Path: d, Name: Path.GetFileName(d), Files: VideosIn(d).OrderByDescending(f => new FileInfo(f).Length).ToList()));
-        var loose = Directory.GetFiles(dir).Where(f => VideoExt.Contains(Path.GetExtension(f).ToLowerInvariant()))
-            .Select(f => (Path: f, Name: Path.GetFileNameWithoutExtension(f), Files: new List<string> { f }));
-        return folders.Concat(loose).Where(x => x.Files.Count > 0).AsParallel().Select(x =>
+        var (shows, loose) = Crawl(dir, true);
+        var folders = shows.Select(d => (Path: d, Name: Path.GetFileName(d), Files: VideosIn(d).OrderByDescending(f => new FileInfo(f).Length).ToList()));
+        var files = loose.Select(f => (Path: f, Name: Path.GetFileNameWithoutExtension(f), Files: new List<string> { f }));
+        return folders.Concat(files).Where(x => x.Files.Count > 0).AsParallel().Select(x =>
         {
             var (title, year) = CleanTitle(x.Name);
             var videos = x.Files.Select((f, i) => new Video(f, i == 0 ? (year != null ? $"{title} ({year})" : title) : CleanTitle(Path.GetFileNameWithoutExtension(f)).Title, i + 1)).ToList();
             var e = new Entry(title, null, videos, "videos", false, x.Path, "movie");
-            return e with { Cover = (Directory.Exists(x.Path) ? LoadCover(x.Path) : null) ?? LoadCoverFile(CoverFile(e.InfoKey)) };
+            return e with { Cover = LoadCover(x.Path) ?? LoadCoverFile(CoverFile(e.InfoKey)) };
         }).ToList();
     }
 
     // Covers fetched for TV shows and movies live in the app's data folder (nothing is written into your media folders).
     public static string CoverFile(string infoKey) => Path.Combine(DataDir, "covers", Regex.Replace(infoKey, @"[^\w]+", "_") + ".jpg");
 
+    // Anime shows ("episodes") and openings / endings ("themes"): show folders found by Crawl, plus loose files grouped by show.
     static List<Entry> Scan(string dir, string unit)
     {
-        if (!Directory.Exists(dir)) return new();
-        return Directory.GetDirectories(dir)
-            .OrderBy(Path.GetFileName, Natural.I)
+        bool themes = unit == "themes";
+        var (shows, loose) = Crawl(dir, false);
+        Video Make(string f, int i) => themes ? new Video(f, Friendly(f), i + 1) : WithSeason(new Video(f, Friendly(f), i + 1));
+        var folders = shows.Select(d => (Name: Path.GetFileName(d), Folder: d, Files: VideosIn(d).OrderBy(f => Path.GetRelativePath(d, f), Natural.I).ToList()));
+        return folders.Concat(LooseShows(loose, themes))
+            .OrderBy(x => x.Name, Natural.I)
             .AsParallel().AsOrdered() // covers decode in parallel: the slow part of startup
-            .Select(d => new Entry(Path.GetFileName(d), LoadCover(d),
-                Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories)
-                    .Where(f => VideoExt.Contains(Path.GetExtension(f).ToLowerInvariant()))
-                    .OrderBy(f => Path.GetRelativePath(d, f), Natural.I)
-                    .Select((f, i) => unit == "episodes" ? WithSeason(new Video(f, Friendly(f), i + 1)) : new Video(f, Friendly(f), i + 1))
-                    .ToList(), unit, false, d))
+            .Select(x => new Entry(x.Name, LoadCover(x.Folder) ?? LoadCoverFile(CoverFile(x.Name)), x.Files.Select(Make).ToList(), unit, false, x.Folder))
             .Where(e => e.Videos.Count > 0)
             .Select(e => { NameEpisodes(e); return e; }) // anime shows get official episode names too (openings don't)
             .ToList();
     }
 
-    static ImageSource? LoadCover(string dir) => LoadCoverFile(Directory.EnumerateFiles(dir, "cover.*")
-        .FirstOrDefault(p => CoverExt.Contains(Path.GetExtension(p).ToLowerInvariant())));
+    // cover.jpg / poster.png / folder.jpg in the show's folder (none for loose files)
+    static ImageSource? LoadCover(string dir)
+    {
+        if (!Directory.Exists(dir)) return null;
+        foreach (var name in new[] { "cover", "poster", "folder" })
+            if (Directory.EnumerateFiles(dir, name + ".*").FirstOrDefault(p => CoverExt.Contains(Path.GetExtension(p).ToLowerInvariant())) is string f) return LoadCoverFile(f);
+        return null;
+    }
 
     static ImageSource? LoadCoverFile(string? f)
     {
@@ -632,7 +664,7 @@ public partial class MainWindow : Window
 
     // ---------- Home ----------
 
-    readonly Dictionary<Canvas, List<AnimationClock>> wallClocks = new();
+    readonly Dictionary<Canvas, List<Drift>> wallClocks = new();
 
     // Home panel background: a tilted wall of the category's covers, rows drifting slowly in alternate directions.
     // Each row is cached as one bitmap, so drifting only moves a texture (cheap), and it pauses with the moving background.
@@ -648,7 +680,7 @@ public partial class MainWindow : Window
             c.SizeChanged += (_, _) => { if (walls.TryGetValue(c, out var w) && WallRows(c) > w.Rows) BuildWall(c, w.Entries); };
         int rows = WallRows(c);
         walls[c] = (entries, rows);
-        if (wallClocks.TryGetValue(c, out var old)) foreach (var k in old) k.Controller?.Stop();
+        if (wallClocks.TryGetValue(c, out var old)) foreach (var k in old) k.End();
         var clocks = wallClocks[c] = new();
         c.Children.Clear();
         var covers = entries.Select(e => e.Cover).OfType<ImageSource>().OrderBy(_ => Random.Shared.Next()).ToList();
@@ -670,9 +702,7 @@ public partial class MainWindow : Window
             bool left = r % 2 == 0;
             var anim = new DoubleAnimation(left ? 0 : -aw, left ? -aw : 0, TimeSpan.FromSeconds(aw / 10)) { RepeatBehavior = RepeatBehavior.Forever };
             Timeline.SetDesiredFrameRate(anim, 30);
-            var clock = anim.CreateClock();
-            tt.ApplyAnimationClock(TranslateTransform.XProperty, clock);
-            clocks.Add(clock);
+            clocks.Add(new Drift(tt, TranslateTransform.XProperty, anim));
             wall.Children.Add(row);
         }
         Canvas.SetLeft(wall, -160);
@@ -693,6 +723,10 @@ public partial class MainWindow : Window
     {
         foreach (var v in new UIElement[] { Home, Library, Detail, Player })
             v.Visibility = v == view ? Visibility.Visible : Visibility.Collapsed;
+        if (Hwnd != IntPtr.Zero) WindowAnimations(); // also covers minimizing from the taskbar while playing
+        // the header's drag strip: none over the video (clicks there are the video's; the top bar drags the window itself)
+        WindowChrome.GetWindowChrome(this).CaptionHeight = view == Player ? 0 : 52;
+        ApplyGlass(); // solid black behind the player, glass everywhere else
         if (view == Home && lib != null) UpdateContinue();
         if (view == Detail) RefreshWatchViews(); // progress from the episode you just watched
         UpdateBlobs();
@@ -720,9 +754,10 @@ public partial class MainWindow : Window
 
     void OnTile(object sender, RoutedEventArgs e)
     {
+        if (tileDragged) { tileDragged = false; return; } // that press was a drag, not a click
         var key = (string)((Button)sender).Tag;
         currentCategory = key;
-        LibraryTitle.Text = key == "Shows" ? "Shows and Movies" : "Openings / Endings";
+        LibraryTitle.Text = Libs.FirstOrDefault(l => l.Id == key)?.Name ?? "";
         ResetFilters();
         ApplyFilter();
         Show(Library);
@@ -940,6 +975,7 @@ public partial class MainWindow : Window
             }
         }
         MissingItems.Children.Add(Line("Compared with the show's official episode list. Episodes that haven't aired yet and specials aren't counted.", 12, top: 14, color: (Brush)FindResource("Muted")));
+        GlassFrost.Grab(MissingBtn); // the screen behind it, before it covers it
         MissingPopup.IsOpen = true;
     }
 
@@ -1047,13 +1083,7 @@ public partial class MainWindow : Window
         return tcs.Task;
     }
 
-    // ---------- Player (mpv embedded via --wid, controlled over JSON IPC) ----------
-
-    static string MpvPath() =>
-        (Environment.GetEnvironmentVariable("PATH") ?? "").Split(';')
-            .Select(d => Path.Combine(d.Trim().Trim('"'), "mpv.exe"))
-            .Prepend(@"C:\Program Files\MPV Player\mpv.exe")
-            .FirstOrDefault(File.Exists) ?? "mpv.exe";
+    // ---------- Player (mpv inside the app, MpvVideo.cs; controlled over its JSON pipe) ----------
 
     // ---------- video fills the window ----------
 
@@ -1118,11 +1148,14 @@ public partial class MainWindow : Window
 
     // Maximized / fullscreen: if the screen is nearly the video's shape, zoom a touch to fill it
     // (crops a few percent); a clearly different shape (4:3 on widescreen) keeps its side bars.
+    bool? lastFill;
     void UpdateFill()
     {
         if (!Player.IsVisible || videoAspect <= 0 || VideoHost.ActualHeight <= 0 || dragSizing) return;
         double hostAspect = VideoHost.ActualWidth / VideoHost.ActualHeight;
         bool fill = Math.Abs(hostAspect / videoAspect - 1) < 0.08;
+        if (fill == lastFill) return; // called on every size step while the window glides
+        lastFill = fill;
         Send(new object[] { "set_property", "panscan", fill ? 1.0 : 0.0 });
         controls?.SetFill(fill);
     }
@@ -1131,7 +1164,19 @@ public partial class MainWindow : Window
 
     async void Play(Entry entry, int index)
     {
+        // already playing (a video dropped on the player): finish the old one cleanly, then play the new one in its place
+        if (mpv is { } old)
+        {
+            RecordWatch();
+            Watch.Save();
+            mpv = null; // its exit is no longer "leaving the player"
+            session++;
+            lastStop = StopMpv(old); // mpv saves its resume point as it quits
+            controls?.Close();
+            controls = null;
+        }
         videoAspect = 0;
+        lastFill = null; // a new mpv: its zoom-to-fill starts off
         playingEntry = entry;
         autoPop = Settings.Current.AutoPopOut;
         Show(Player);
@@ -1144,19 +1189,16 @@ public partial class MainWindow : Window
         File.WriteAllLines(m3u, entry.Videos.Select(v => v.Path).Prepend("#EXTM3U"), new UTF8Encoding(false));
 
         var pipe = $"animeplayer-{Environment.ProcessId}-{my}";
-        var psi = new ProcessStartInfo(MpvPath()) { UseShellExecute = false, CreateNoWindow = true };
-        foreach (var a in new[]
+        var args = new[]
         {
-            $"--wid={VideoPanel.Handle}",
+            "--drag-and-drop=no", // files dropped on the video come to us instead (DropPlay.cs)
             $@"--input-ipc-server=\\.\pipe\{pipe}",
             "--profile=high-quality",
-            "--vo=gpu-next",                    // needed for the live glass shader
             "--hwdec=auto-safe",               // NVDEC/D3D11 HEVC decode on the GPU
             // shows resume where you left off; openings/endings always play from the start
             $"--save-position-on-quit={(Settings.Current.Resume && entry.Unit != "themes" ? "yes" : "no")}",
             $"--resume-playback={(Settings.Current.Resume && entry.Unit != "themes" ? "yes" : "no")}",
             $"--watch-later-dir={Path.Combine(DataDir, "watch_later")}",
-            "--force-window=immediate",
             "--osc=no", "--osd-bar=no",         // our own control bar replaces mpv's
             "--cursor-autohide=no",           // matches the bar's 2s auto-hide
             $"--keep-open={(Settings.Current.Autoplay ? "no" : "yes")}", // autoplay next, or stop at the end
@@ -1174,18 +1216,19 @@ public partial class MainWindow : Window
             $"--volume={volume.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
             $"--playlist-start={index}",
             $"--playlist={m3u}",
-        }) psi.ArgumentList.Add(a);
+        };
 
         try
         {
-            var p = Process.Start(psi)!;
+            var p = new MpvVideo(args);
             mpv = p;
-            p.EnableRaisingEvents = true;
-            p.Exited += (_, _) => Dispatcher.Invoke(() => { if (mpv == p) { mpv = null; LeavePlayer(); } });
+            p.Exited += () => { if (mpv == p) { mpv = null; LeavePlayer(); } };
+            VideoImage.Source = p.Image;
+            SizeVideo();
             _ = Listen(pipe, entry, my);
             controls = new PlayerControls
             {
-                Owner = this, Send = Send, Expand = Expand, Ask = Ask,ResumeAllowed = entry.Unit != "themes", Kind = entry.Kind,
+                Owner = this, Send = Send, Notify = Toast, Expand = Expand, Ask = Ask,ResumeAllowed = entry.Unit != "themes", Kind = entry.Kind,
                 Back = () => OnBack(null, null),
                 Minimize = () => WindowState = WindowState.Minimized,
                 ToggleMaximize = ToggleMaximizeOrFullscreen,
@@ -1198,20 +1241,15 @@ public partial class MainWindow : Window
             controls.SetTitle(entry.Name);
             controls.SetMaximized(WindowState == WindowState.Maximized);
             controls.SetFullscreen(fullscreen);
-            controls.ShownChanged += on =>
-            {
-                VideoPanel.Cursor = on ? System.Windows.Forms.Cursors.Default : BlankCursor;
-                // Set the system cursor only while it's over the video: setting it anywhere else left it blank
-                // over the rest of the app (WPF doesn't know to put it back) until a restart.
-                if (Player.IsVisible && OverVideo())
-                    System.Windows.Forms.Cursor.Current = on ? System.Windows.Forms.Cursors.Default : BlankCursor;
-            };
-            controls.Show();
+            // new bars start shown without raising ShownChanged, so clear a hidden cursor left by the last video
+            VideoHost.Cursor = null;
+            controls.ShownChanged += on => VideoHost.Cursor = on ? null : Cursors.None;
+            Player.Children.Add(controls); // over the video
             PlaceControls();
         }
         catch (Exception ex)
         {
-            MessageBox.Show(this, $"Couldn't start mpv ({MpvPath()}):\n{ex.Message}", "Anime Upscaled");
+            Toast($"Couldn't play that video: {ex.Message}");
             LeavePlayer();
         }
     }
@@ -1421,13 +1459,12 @@ public partial class MainWindow : Window
     int session;                              // bumped per video session, so a closing mpv can't touch the next one
     Task lastStop = Task.CompletedTask;       // previous mpv still shutting down
 
-    async Task StopMpv(Process? p)
+    async Task StopMpv(MpvVideo? p)
     {
         if (p == null) return;
         var w = ipc;
         try { if (w != null) await w.WriteLineAsync("""{"command":["quit"]}"""); } catch { }
-        // Don't block the UI thread: mpv's child window talks to ours while it shuts down.
-        if (!await Task.Run(() => p.WaitForExit(3000))) { try { p.Kill(); } catch { } }
+        if (await Task.WhenAny(p.Stopped, Task.Delay(3000)) != p.Stopped) { p.Kill(); await Task.WhenAny(p.Stopped, Task.Delay(3000)); }
     }
 
     async void OnClosing(object? sender, System.ComponentModel.CancelEventArgs e)
@@ -1447,51 +1484,6 @@ sealed class Natural : IComparer<string?>
     public static readonly Natural I = new();
     [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)] static extern int StrCmpLogicalW(string a, string b);
     public int Compare(string? a, string? b) => StrCmpLogicalW(a ?? "", b ?? ""); // "OP2" before "OP10"
-}
-
-// Video panel that hands mouse hits near the window edge to the window, so resizing works over the video.
-public sealed class PassPanel : System.Windows.Forms.Panel
-{
-    public Func<int> EdgeSize = () => 0; // physical pixels; 0 = off (asked live on every hit test)
-
-    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, int flags);
-    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
-    struct RECT { public int L, T, R, B; }
-
-    [DllImport("user32.dll")] static extern bool ReleaseCapture();
-    [DllImport("user32.dll")] static extern IntPtr SendMessage(IntPtr h, int msg, IntPtr w, IntPtr l);
-
-    // Which resize edge (HTLEFT..HTBOTTOMRIGHT, 10..17) a screen point is on, or 0.
-    public static int EdgeCode(int l, int t, int r, int b, IntPtr lParam, int edge)
-    {
-        long lp = lParam.ToInt64();
-        int x = (short)(lp & 0xFFFF), y = (short)((lp >> 16) & 0xFFFF);
-        bool L = x < l + edge, R = x >= r - edge, T = y < t + edge, B = y >= b - edge;
-        return T ? (L ? 13 : R ? 14 : 12) : B ? (L ? 16 : R ? 17 : 15) : L ? 10 : R ? 11 : 0;
-    }
-
-    // Our own resize: start the window's native size drag from that edge (keeps the WM_SIZING aspect lock).
-    public static void StartResize(IntPtr root, IntPtr code, IntPtr lParam)
-    {
-        ReleaseCapture();
-        SendMessage(root, 0xA1 /* WM_NCLBUTTONDOWN */, code, lParam);
-    }
-
-    protected override void WndProc(ref System.Windows.Forms.Message m)
-    {
-        if (m.Msg == 0x84 /* WM_NCHITTEST */ && EdgeSize() is int edge && edge > 0 && GetWindowRect(GetAncestor(Handle, 2 /* GA_ROOT */), out var r)
-            && EdgeCode(r.L, r.T, r.R, r.B, m.LParam, edge) is int code && code > 0)
-        {
-            m.Result = code; // size cursor shows on its own
-            return;
-        }
-        if (m.Msg == 0xA1 /* WM_NCLBUTTONDOWN */ && (int)m.WParam is >= 10 and <= 17)
-        {
-            StartResize(GetAncestor(Handle, 2), m.WParam, m.LParam);
-            return;
-        }
-        base.WndProc(ref m);
-    }
 }
 
 // Wheel scrolling that glides to the target instead of jumping 48px per notch.

@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net9.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
@@ -14,11 +15,16 @@
     <Optimize>true</Optimize>
   </PropertyGroup>
   <ItemGroup>
-    <Resource Include="Assets\logo.png" />
-    <Resource Include="Assets\haku.ico" />
-    <!-- Shippori Mincho (SIL Open Font License, see Assets\Fonts\OFL.txt): the home page title -->
-    <Resource Include="Assets\Fonts\ShipporiMincho-ExtraBold.ttf" />
-    <None Include="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Outfit (SIL Open Font License, see Assets\Fonts\OFL-Outfit.txt): the home page wordmark -->
+    <Resource Include="Assets\Fonts\Outfit-SemiBold.ttf" />
+    <Resource Include="Assets\Fonts\Outfit-Light.ttf" />
+    <None Include="Assets\Fonts\OFL-Outfit.txt" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Assets\glass.glsl" CopyToOutputDirectory="PreserveNewest" />
+    <!-- mpv as a library (shinchiro build 20261021, git e471496c56): it draws the video into our own window -->
+    <None Include="lib\libmpv-2.dll" Link="libmpv-2.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+    <PackageReference Include="Vortice.Direct3D9" Version="3.8.3" />
   </ItemGroup>
 </Project>

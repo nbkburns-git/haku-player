@@ -136,27 +136,42 @@ sealed class GlassSurface
 sealed class GlassFrame
 {
     public BitmapSource Boosted { get; }
-    readonly byte[] px;
-    readonly int w, h;
+    readonly byte[] lum; // brightness at every 2nd pixel (all Luminance reads): ~21 KB, not a 332 KB copy of the frame
+    readonly int w, h, lw;
 
+    // Built about once a second while the bars show. The full-size working buffers (332 KB each, which .NET puts on the
+    // large-object heap, only freed by full collections) are rented from the shared pool and handed straight back.
     public GlassFrame(BitmapSource src)
     {
         var b = new FormatConvertedBitmap(src, PixelFormats.Bgra32, null, 0);
         w = b.PixelWidth; h = b.PixelHeight;
-        px = new byte[w * h * 4];
-        b.CopyPixels(px, w * 4, 0);
-        var o = new byte[px.Length];
-        for (int i = 0; i < px.Length; i += 4)
+        int n = w * h * 4;
+        var pool = System.Buffers.ArrayPool<byte>.Shared;
+        byte[] px = pool.Rent(n), o = pool.Rent(n);
+        try
         {
-            double bl = px[i], g = px[i + 1], r = px[i + 2];
-            double gray = 0.299 * r + 0.587 * g + 0.114 * bl;
-            o[i] = Clamp((gray + (bl - gray) * 1.6) * 1.08 + 6);
-            o[i + 1] = Clamp((gray + (g - gray) * 1.6) * 1.08 + 6);
-            o[i + 2] = Clamp((gray + (r - gray) * 1.6) * 1.08 + 6);
-            o[i + 3] = 255;
+            b.CopyPixels(px, w * 4, 0);
+            for (int i = 0; i < n; i += 4)
+            {
+                double bl = px[i], g = px[i + 1], r = px[i + 2];
+                double gray = 0.299 * r + 0.587 * g + 0.114 * bl;
+                o[i] = Clamp((gray + (bl - gray) * 1.6) * 1.08 + 6);
+                o[i + 1] = Clamp((gray + (g - gray) * 1.6) * 1.08 + 6);
+                o[i + 2] = Clamp((gray + (r - gray) * 1.6) * 1.08 + 6);
+                o[i + 3] = 255;
+            }
+            lw = (w + 1) / 2;
+            lum = new byte[lw * ((h + 1) / 2)];
+            for (int y = 0; y < h; y += 2)
+                for (int x = 0; x < w; x += 2)
+                {
+                    int i = (y * w + x) * 4;
+                    lum[(y / 2) * lw + x / 2] = (byte)(0.0722 * px[i] + 0.7152 * px[i + 1] + 0.2126 * px[i + 2]);
+                }
+            Boosted = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, o, w * 4); // copies the pixels
+            Boosted.Freeze();
         }
-        Boosted = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, o, w * 4);
-        Boosted.Freeze();
+        finally { pool.Return(px); pool.Return(o); }
     }
 
     static byte Clamp(double v) => (byte)Math.Clamp(v, 0, 255);
@@ -171,8 +186,7 @@ sealed class GlassFrame
             {
                 n++;
                 if (x < 0 || y < 0 || x >= w || y >= h) continue;
-                int i = (y * w + x) * 4;
-                sum += (0.0722 * px[i] + 0.7152 * px[i + 1] + 0.2126 * px[i + 2]) / 255;
+                sum += lum[(y / 2) * lw + x / 2] / 255.0;
             }
         return n == 0 ? 0 : sum / n;
     }
