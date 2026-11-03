@@ -115,11 +115,16 @@ public partial class MainWindow
         if (SettingsLayer.IsVisible) BuildGlobalSettings();
     }
 
+    // TV shows and movies: NVIDIA's RTX Video (made for live action), the anime model, or nothing (Settings.UpscaleLiveAction)
+    string LiveActionMode => playingEntry?.Kind is "tv" or "movie" ? Settings.Current.UpscaleLiveAction : "anime";
+
     async void UpdateUpscale(int my)
     {
         if (videoWidth <= 0 || videoHeight <= 0) return;
+        if (LiveActionMode == "rtx") { await UpdateRtx(my); return; }
         string why = "dropped frames on this video, so it turned itself off";
         var tier = upscaleBlocked ? null : Upscaler.Choose(videoWidth, videoHeight, videoFps, out why);
+        if (tier != null && LiveActionMode == "off") { tier = null; why = "off for TV shows and movies (Settings, AI upscaling)"; }
         if (tier != null && Settings.Current.UpscaleTier == "auto" && Array.IndexOf(Upscaler.Tiers, tier) > tierLimit)
             tier = Upscaler.Tiers[tierLimit]; // stepped down for this video
         tierIndex = tier == null ? -1 : Array.IndexOf(Upscaler.Tiers, tier);
@@ -206,6 +211,84 @@ public partial class MainWindow
             controls?.SetUpscaleButton(true, false, "AI upscaling couldn't start for this video");
             Toast("AI upscaling couldn't start for this video");
         }
+    }
+
+    // RTX Video Super Resolution: NVIDIA's own live-action upscaler, built into the driver and reached through mpv's d3d11vpp
+    // filter. Light on the GPU (no model of ours, no buffer), sized to fill the screen's height. Same filter label as the AI, so
+    // turning it off, the button and the safety net work the same way.
+    async Task UpdateRtx(int my)
+    {
+        var s = Settings.Current;
+        int w = videoWidth, h = videoHeight;
+        string? gamma = await Ask(new object[] { "get_property_string", "video-params/gamma" });
+        if (my != session) return;
+        int screen = ScreenHeight();
+        double scale = h > 0 && screen > 0 ? Math.Min(4.0, (double)screen / h) : 2.0;
+        string? why = !s.Upscale ? "turned off"
+            : upscaleBlocked ? "dropped frames on this video, so it turned itself off"
+            : Upscaler.Speed <= 0 ? "RTX Video needs an NVIDIA RTX graphics card"
+            : gamma is "pq" or "hlg" ? "HDR plays without upscaling for now"
+            : scale < 1.2 ? $"not needed: {w}×{h} already fills your screen" : null;
+        string key = why == null ? $"rtx|{w}x{h}|{scale:0.###}" : "";
+        if (key == upscaleKey) return;
+        upscaleKey = key;
+        tierIndex = -1;
+        if (upscaleActive)
+        {
+            Send(new object[] { "vf", "remove", "@" + Upscaler.Label });
+            upscaleActive = false;
+            controls?.SetUpscale(0);
+        }
+        if (why != null)
+        {
+            controls?.SetUpscaleButton(s.Upscale, false, $"Upscaling: {why}");
+            aiStarting = false;
+            AiRelease(0);
+            controls?.SetAiLoading(null);
+            return;
+        }
+        bool pausedByYou = controls is { Paused: true } && !aiHolding;
+        if (!pausedByYou) AiHold();
+        aiStarting = true;
+        controls?.SetAiLoading("Starting RTX Video", sub: "NVIDIA's upscaler for live action");
+        // format=nv12: RTX Video takes 8-bit frames (10-bit video is converted on the way)
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        Send(new object[] { "vf", "add", $"@{Upscaler.Label}:d3d11vpp=scale={scale.ToString("0.###", inv)}:scaling-mode=nvidia:format=nv12" });
+        upscaleActive = true;
+        dropBase = -1;
+        int ow = 0, oh = (int)Math.Round(h * scale);
+        bool took = false;
+        for (int i = 0; i < 20 && !took; i++)
+        {
+            await Task.Delay(500);
+            if (my != session || upscaleKey != key) return;
+            took = int.TryParse(await Ask(new object[] { "get_property_string", "video-out-params/w" }), out ow) && ow >= w * scale - 2;
+        }
+        aiStarting = false;
+        if (took)
+        {
+            guardFrom = DateTime.UtcNow.AddSeconds(3);
+            controls?.SetUpscale(oh, "RTX");
+            controls?.SetUpscaleButton(true, true, $"RTX Video upscaling on: {w}×{h} → {ow}×{oh}, NVIDIA's upscaler for live action (Ctrl+U)");
+            Toast("RTX Video upscaling on");
+            if (aiHolding) AiRelease(500); else controls?.SetAiLoading(null);
+        }
+        else
+        {
+            Send(new object[] { "vf", "remove", "@" + Upscaler.Label });
+            upscaleActive = false;
+            AiRelease(0);
+            controls?.SetAiLoading(null);
+            controls?.SetUpscaleButton(true, false, "RTX Video couldn't start for this video");
+            Toast("RTX Video couldn't start for this video");
+        }
+    }
+
+    // The height of the screen Haku is on, in real pixels (it's per-monitor DPI aware).
+    int ScreenHeight()
+    {
+        try { return System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).Bounds.Height; }
+        catch { return 0; }
     }
 
     // The filter's queue of upscaled frames ready ahead of playback, for the timeline's green bar (4 times a second).

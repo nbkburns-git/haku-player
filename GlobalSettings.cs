@@ -340,6 +340,16 @@ public partial class MainWindow
             return;
         }
 
+        Section(p, "TV shows & movies");
+        Chips(p, "Upscale with", new[] { ("rtx", "RTX Video"), ("anime", "Anime model"), ("off", "Off") }, S.UpscaleLiveAction,
+            v => Change(() => { S.UpscaleLiveAction = v; ApplyUpscaleSetting(); }));
+        Note(S.UpscaleLiveAction switch
+        {
+            "rtx" => "RTX Video Super Resolution is NVIDIA's own upscaler, made for real-life video: it cleans up compression and keeps skin and texture natural. Light on the graphics card. Anime always uses the anime model below.",
+            "anime" => "The anime model on everything: great for cartoons in your TV library, but it makes live action look smooth and painted.",
+            _ => "TV shows and movies play as they are; anime still uses the anime model below.",
+        });
+
         Section(p, "Model");
         Chips(p, "Speed and quality", new[] { ("auto", "Auto"), ("fast", "Fast"), ("balanced", "Balanced"), ("quality", "Quality") }, S.UpscaleTier,
             v => Change(() => { S.UpscaleTier = v; ApplyUpscaleSetting(); }));

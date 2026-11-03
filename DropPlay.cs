@@ -41,7 +41,7 @@ public partial class MainWindow
 
     void PlayFiles(List<string> files)
     {
-        Activate();
+        Front();
         if (!Player.IsVisible) returnTo = Home.IsVisible ? Home : Library.IsVisible ? Library : Detail.IsVisible ? Detail : Home;
         var same = StringComparer.OrdinalIgnoreCase;
         var home = files.Count == 1 ? Everything(lib).FirstOrDefault(x => !x.IsRandom && x.Videos.Any(v => same.Equals(v.Path, files[0]))) : null;

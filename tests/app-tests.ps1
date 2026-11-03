@@ -1,4 +1,4 @@
-# Haku Player end-to-end tests: AI upscaling, its buffer, seeking, pausing, the AI button, subtitles, show details.
+﻿# Haku Player end-to-end tests: AI upscaling, its buffer, seeking, pausing, the AI button, subtitles, show details.
 # Builds a test copy into $Out and runs it with its own data folder (HAKU_DATA_DIR), so your real settings and history are
 # never touched. Each test drives the app through mpv's JSON pipe and Windows UI Automation (never the real mouse).
 #
@@ -9,7 +9,9 @@
 param(
     [string]$Out = (Join-Path $env:TEMP "haku-tests"),
     [string[]]$Only = @(),
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    # where the test window goes, in screen pixels (another monitor, say); it never takes focus: "x,y,w,h"
+    [string]$Window = $env:HAKU_TEST_WINDOW
 )
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path $PSScriptRoot -Parent
@@ -25,10 +27,13 @@ $Media = @{
     UHD    = ''   # a 3840x2160 video (should play as it is)
     Subs   = ''   # episode 01 of a show whose default subtitle track is "Signs & Songs", with episode 02 next to it
     AnimeLibrary = '' # the anime library folder those are in (for the subtitle, next-episode and show-detail tests)
+    LiveAction = ''   # a 1080p live-action TV episode (RTX Video)
+    TvLibrary  = ''   # the TV library folder it's in
 }
 # badly named show folders in that library and the title each should get: @{ 'Some_Show_Complete' = 'Some Show' } (folder name with
 # non-word characters as _)
 $ShowDetails = @{}
+$TestWindow = $null # or set it in media.local.ps1
 $localMedia = Join-Path $PSScriptRoot "media.local.ps1"
 if (Test-Path $localMedia) { . $localMedia }
 
@@ -50,12 +55,13 @@ function Skip($name, $why) { $Results.Add([pscustomobject]@{ Test = $name; Resul
 function Start-Haku([string]$file, [hashtable]$settings = @{}) {
     if (Test-Path $DataDir) { Remove-Item $DataDir -Recurse -Force }
     New-Item -ItemType Directory $DataDir | Out-Null
-    $conf = [ordered]@{ SettingsVersion = 3; Upscale = $true; UpscaleTier = 'auto'; Resume = $false; Autoplay = $true; AutoPopOut = $false }
+    # UpscaleLiveAction = anime: files opened from outside a library count as movies, and these tests are about the AI
+    $conf = [ordered]@{ SettingsVersion = 3; Upscale = $true; UpscaleTier = 'auto'; UpscaleLiveAction = 'anime'; Resume = $false; Autoplay = $true; AutoPopOut = $false }
     foreach ($k in $settings.Keys) { $conf[$k] = $settings[$k] }
     $conf | ConvertTo-Json -Depth 6 | Set-Content (Join-Path $DataDir "settings.json") -Encoding utf8
-    $env:HAKU_DATA_DIR = $DataDir; $env:HAKU_TRACE = $TraceFile
+    $env:HAKU_DATA_DIR = $DataDir; $env:HAKU_TRACE = $TraceFile; if (-not $Window) { $Window = $TestWindow }; if ($Window) { $env:HAKU_TEST_WINDOW = $Window }
     try { $proc = if ($file) { Start-Process (Join-Path $AppDir "HakuPlayer.exe") -ArgumentList "`"$file`"" -PassThru } else { Start-Process (Join-Path $AppDir "HakuPlayer.exe") -PassThru } }
-    finally { Remove-Item Env:HAKU_DATA_DIR, Env:HAKU_TRACE -ErrorAction SilentlyContinue }
+    finally { Remove-Item Env:HAKU_DATA_DIR, Env:HAKU_TRACE, Env:HAKU_TEST_WINDOW -ErrorAction SilentlyContinue }
     $script:Hk = @{ Proc = $proc; Id = 7000 }
     if ($file) { Connect-Pipe }
     $script:Hk
@@ -273,6 +279,20 @@ try {
             $got = WaitFor { (Q 'current-tracks/sub/external') -eq 'yes' } 8
             $delay = QN 'sub-delay'
             Report 'own-subtitles' ($got -ge 0 -and [math]::Abs($delay - 0.5) -lt 0.01) "added file selected after $got s ('$(Q 'current-tracks/sub/title')'), timing $delay s"
+            Stop-Haku
+        }
+    }
+
+    if (Want 'rtx') {
+        if (-not ($Media.LiveAction -and (Test-Path -LiteralPath $Media.LiveAction) -and $Media.TvLibrary)) { Skip 'rtx' "no live-action file or TV library in media.local.ps1" } else {
+            # a TV show from your TV library gets NVIDIA's RTX Video, not the anime model
+            Start-Haku $Media.LiveAction @{ UpscaleLiveAction = 'rtx'; Libs = @(@{ Id = 'tv'; Name = 'TV'; Folders = @(@{ Path = $Media.TvLibrary; Kind = 'tv' }); Home = $true }) } | Out-Null
+            $w = 0; WaitFor { ($script:w = QN 'width') -gt 0 } 20 | Out-Null
+            $on = WaitFor { (AiTip) -match 'RTX Video upscaling on' -and (QN 'video-out-params/w') -ge 2 * $script:w - 2 -and (Q 'pause') -eq 'no' } 20
+            $vf = Q 'vf'; $tip = AiTip
+            $watch = Watch 8
+            $badge = [bool]((Window).FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -match '4K\s+\w+\s+RTX$' })
+            Report 'rtx' ($on -ge 0 -and $vf -match 'd3d11vpp' -and $vf -notmatch 'haku_sr' -and $tip -match 'RTX Video upscaling on' -and $badge -and $watch.Drops -eq 0) "on after $on s: '$(($tip -split "`n")[0])', badge says RTX: $badge, 8 s: $($watch.Drops) drops"
             Stop-Haku
         }
     }

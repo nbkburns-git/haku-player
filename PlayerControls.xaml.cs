@@ -289,14 +289,17 @@ public partial class PlayerControls : UserControl
         qualityCodec = codec;
         string res = Res(height);
         if (upscaleHeight > 0 && res != "") res += $" → {Res(upscaleHeight)}";
-        QualityText.Text = string.Join("  ", new[] { res, codec.ToUpperInvariant(), upscaleHeight > 0 ? "AI" : "" }.Where(x => x != ""));
+        QualityText.Text = string.Join("  ", new[] { res, codec.ToUpperInvariant(), upscaleHeight > 0 ? upscaleTag : "" }.Where(x => x != ""));
         Quality.Visibility = QualityText.Text == "" ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    // the badge reads "1080p → 4K  H264  AI" while AI upscaling runs; 0 = not upscaling
-    public void SetUpscale(int outHeight)
+    string upscaleTag = "AI";
+
+    // the badge reads "1080p → 4K  H264  AI" (or "RTX" for NVIDIA's RTX Video) while upscaling runs; 0 = not upscaling
+    public void SetUpscale(int outHeight, string tag = "AI")
     {
         upscaleHeight = outHeight;
+        upscaleTag = tag;
         SetQuality(qualityHeight, qualityCodec);
     }
 

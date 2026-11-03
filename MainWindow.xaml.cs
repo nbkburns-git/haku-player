@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -54,6 +54,13 @@ public partial class MainWindow : Window
         new() { Id = "themes", Name = "Openings / Endings", Folders = { new() { Path = ArgRoot, Kind = "themes" } } },
     };
     static List<MediaLibrary> Libs => ArgRoot != null ? ArgLibs : Settings.Current.Libs;
+
+    // Test runs (tests\app-tests.ps1): HAKU_TEST_WINDOW="x,y,w,h" in screen pixels puts the window there (e.g. on another
+    // monitor) and Haku never takes focus or comes to the front, so tests can run while you use the PC.
+    static readonly (int X, int Y, int W, int H)? TestWindow =
+        Environment.GetEnvironmentVariable("HAKU_TEST_WINDOW")?.Split(',') is { Length: 4 } p && p.All(x => int.TryParse(x, out _))
+            ? (int.Parse(p[0]), int.Parse(p[1]), int.Parse(p[2]), int.Parse(p[3])) : null;
+    void Front() { if (TestWindow == null) Activate(); }
     static readonly string[] VideoExt = { ".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v" };
     static readonly string[] CoverExt = { ".png", ".jpg", ".jpeg", ".webp", ".bmp" };
     static readonly string DataDir = Settings.DataDir; // %LOCALAPPDATA%\Haku Player
@@ -84,7 +91,9 @@ public partial class MainWindow : Window
         {
             SetupGlass();
             HwndSource.FromHwnd(Hwnd).AddHook(KeepVideoShape);
+            if (TestWindow is { } r) SetWindowPos(Hwnd, IntPtr.Zero, r.X, r.Y, r.W, r.H, 0x0014 /* NOZORDER | NOACTIVATE */);
         };
+        if (TestWindow != null) ShowActivated = false; // a test run: never take focus (you may be in a game)
         StateChanged += (_, _) => { FitMaximized(); UpdateBlobs(); };
         Activated += (_, _) => UpdateBlobs();
         Deactivated += (_, _) => UpdateBlobs();
@@ -1110,7 +1119,9 @@ public partial class MainWindow : Window
             return;
         }
         if (!ShapeLocked) return;
-        var work = SystemParameters.WorkArea;
+        // the work area of the monitor the window is on (SystemParameters.WorkArea is the main monitor's: a window on a
+        // second monitor jumped to the main one when a video started)
+        var work = MonitorWorkArea();
         double w = Width, h = w / videoAspect;
         if (h > work.Height) { h = work.Height; w = h * videoAspect; }
         sizeBeforePlayer ??= new Rect(Left, Top, Width, Height);
@@ -1118,6 +1129,18 @@ public partial class MainWindow : Window
         Width = w; Height = h;
         Left = Math.Clamp(cx - w / 2, work.Left, Math.Max(work.Left, work.Right - w));
         Top = Math.Clamp(cy - h / 2, work.Top, Math.Max(work.Top, work.Bottom - h));
+    }
+
+    // This window's monitor's work area (no taskbar), in the window's own units (WPF device-independent pixels).
+    Rect MonitorWorkArea()
+    {
+        try
+        {
+            var wa = System.Windows.Forms.Screen.FromHandle(Hwnd).WorkingArea; // real pixels
+            var toDip = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+            return new Rect(toDip.Transform(new Point(wa.Left, wa.Top)), toDip.Transform(new Point(wa.Right, wa.Bottom)));
+        }
+        catch { return SystemParameters.WorkArea; }
     }
 
     // While playing in a normal window, dragging an edge keeps the video's shape.
@@ -1246,7 +1269,7 @@ public partial class MainWindow : Window
                 Back = () => OnBack(null, null),
                 Minimize = () => WindowState = WindowState.Minimized,
                 ToggleMaximize = ToggleMaximizeOrFullscreen,
-                ActivateOwner = () => Activate(),
+                ActivateOwner = () => Front(),
                 PopOut = TogglePopOut,
                 Resizable = () => CanResizeEdges,
                 CloseApp = Close,
@@ -1473,7 +1496,7 @@ public partial class MainWindow : Window
         sizeBeforePlacement = null;
         SaveVolume();
         Show(returnTo);
-        Activate();
+        Front();
     }
 
     static double LoadVolume()
