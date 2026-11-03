@@ -8,3 +8,9 @@ publish/
 data/
 # libmpv (121 MB, over GitHub's file limit): download it, see README
 lib/*.dll
+# local build tools and SDKs (CUDA, TensorRT): never committed
+deps/
+# native build output (haku_sr.dll, TensorRT DLLs)
+native/haku_sr/build/
+native/haku_sr/out/
+native/haku_sr/build.log

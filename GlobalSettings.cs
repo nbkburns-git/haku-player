@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
@@ -58,11 +59,13 @@ public partial class MainWindow
     void OnSettingsBackdrop(object s, System.Windows.Input.MouseButtonEventArgs e) { if (e.OriginalSource == SettingsLayer) CloseSettings(); }
 
     string settingsPage = "Library";
+    bool upscalePreparing; // "Prepare all now" is running
     static readonly (string Key, string Icon, string Name)[] SettingsPages =
     {
         ("Library", "", "Library"),
         ("Appearance", "", "Appearance"),
         ("Playback", "", "Playback"),
+        ("Upscale", "", "AI upscaling"),
         ("Audio", "", "Audio & subtitles"),
         ("Stats", "", "Stats"),
         ("Advanced", "", "Advanced"),
@@ -99,6 +102,7 @@ public partial class MainWindow
             case "Library": LibraryPage(); break;
             case "Appearance": AppearancePage(); break;
             case "Playback": PlaybackPage(); break;
+            case "Upscale": UpscalePage(); break;
             case "Audio": AudioPage(); break;
             case "Stats": StatsPage(p); break;
             default: AdvancedPage(); break;
@@ -319,6 +323,93 @@ public partial class MainWindow
         Chips(p, "Hide controls after", new[] { (2.0, "2s"), (3.0, "3s"), (5.0, "5s") }, S.HideAfter, v => Change(() => S.HideAfter = v));
         Toggle(p, "Timeline previews", "Picture preview when hovering the timeline", S.Previews, () => Change(() => S.Previews = !S.Previews));
         }
+
+        void UpscalePage()
+        {
+        var gpu = Upscaler.Gpu.Replace("NVIDIA GeForce ", "");
+        Section(p, "AI upscaling");
+        Toggle(p, "AI upscaling", !Upscaler.Installed ? @"Needs the Haku Upscaler pack in %LOCALAPPDATA%\Haku Upscaler"
+                : Upscaler.Speed <= 0 ? "Needs an NVIDIA RTX graphics card"
+                : $"Redraws videos smaller than your screen at twice the size with AnimeJaNai, live on your {gpu}",
+            S.Upscale, () => Change(() => { S.Upscale = !S.Upscale; ApplyUpscaleSetting(); }));
+        if (!S.Upscale || !Upscaler.Installed || Upscaler.Speed <= 0)
+        {
+            Note("Turn it on or off while watching with the sparkle button in the player, or Ctrl+U.");
+            Credits();
+            return;
+        }
+
+        Section(p, "Model");
+        Chips(p, "Speed and quality", new[] { ("auto", "Auto"), ("fast", "Fast"), ("balanced", "Balanced"), ("quality", "Quality") }, S.UpscaleTier,
+            v => Change(() => { S.UpscaleTier = v; ApplyUpscaleSetting(); }));
+        Chips(p, "Look", new[] { ("sharp", "Sharp"), ("soft", "Soft") }, S.UpscaleLook, v => Change(() => { S.UpscaleLook = v; ApplyUpscaleSetting(); }));
+        Note(S.UpscaleLook == "soft" ? "Soft: AnimeJaNai V3, cleaner and closer to the source." : "Sharp: AnimeJaNai V3 Sharp1, crisper lines and more detail.");
+
+        // the tiers on this PC: estimated speed for 1080p and whether each is prepared yet
+        Section(p, $"On your {gpu}");
+        var auto = Upscaler.Auto(1920, 1080, 23.976);
+        var grid = new Grid { Margin = new Thickness(4, 4, 4, 0) };
+        foreach (var wdt in new[] { 1.4, 1.6, 1.0, 1.1 }) grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(wdt, GridUnitType.Star) });
+        void Cell(int r, int c, string text, bool muted = false, bool accent = false, bool bold = false)
+        {
+            var t = new TextBlock { Text = text, FontSize = 13.5, Margin = new Thickness(0, 6, 8, 6), FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
+                Foreground = accent ? (Brush)FindResource("Accent") : muted ? (Brush)FindResource("Muted") : (Brush)FindResource("Text") };
+            Grid.SetRow(t, r); Grid.SetColumn(t, c); grid.Children.Add(t);
+        }
+        grid.RowDefinitions.Add(new RowDefinition());
+        Cell(0, 0, "Tier", muted: true); Cell(0, 1, "Model", muted: true); Cell(0, 2, "1080p speed", muted: true); Cell(0, 3, "Status", muted: true);
+        int row = 1;
+        bool missing = false;
+        var slow = new List<string>();
+        foreach (var t in Upscaler.Tiers)
+        {
+            grid.RowDefinitions.Add(new RowDefinition());
+            double fps = Upscaler.EstimateFps(t);
+            bool ready = Upscaler.Prepared(t, S.UpscaleLook);
+            missing |= !ready;
+            Cell(row, 0, t.Name + (auto == t ? "  · Auto" : ""), bold: auto == t);
+            Cell(row, 1, t.Size, muted: true);
+            Cell(row, 2, $"~{fps:0} fps", muted: fps < 27.6);
+            if (fps < 27.6) slow.Add(t.Name);
+            Cell(row, 3, ready ? "Ready" : "Not prepared", accent: ready, muted: !ready);
+            row++;
+        }
+        p.Children.Add(new Border { Child = grid, CornerRadius = new CornerRadius(16), Padding = new Thickness(14, 6, 14, 6), Margin = new Thickness(0, 2, 0, 6),
+            Background = (Brush)FindResource("GlassFill"), BorderThickness = new Thickness(1), BorderBrush = (Brush)FindResource("GlassStroke") });
+        if (slow.Count > 0)
+            Note($"{string.Join(" and ", slow)} can't keep up with 1080p at 24 fps on this card. Auto still uses {(slow.Count == 1 ? "it" : "them")} for smaller videos when {(slow.Count == 1 ? "it does" : "they do")}.");
+        if (missing)
+        {
+            var prep = new Button { Style = (Style)FindResource("Glass"), Content = upscalePreparing ? "Preparing…" : "Prepare all now", Padding = new Thickness(16, 8, 16, 8),
+                FontSize = 14, Margin = new Thickness(4, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = !upscalePreparing };
+            System.Windows.Automation.AutomationProperties.SetName(prep, "Prepare AI upscaling models");
+            prep.Click += async (_, _) =>
+            {
+                upscalePreparing = true;
+                BuildGlobalSettings();
+                string? err = null;
+                foreach (var t in Upscaler.Tiers)
+                    err ??= await Upscaler.Prepare(Upscaler.ModelFile(t, S.UpscaleLook));
+                upscalePreparing = false;
+                Toast(err == null ? "AI upscaling models ready" : $"Couldn't prepare a model: {err}");
+                if (SettingsLayer.IsVisible) BuildGlobalSettings();
+            };
+            p.Children.Add(prep);
+            Note("Each model is prepared for your graphics card once (about 15 seconds). Otherwise it happens the first time it's used.");
+        }
+
+        Section(p, "When it runs");
+        Note("• Videos smaller than your screen, up to 1920×1080 (a 4K file plays as it is).\n" +
+             "• SDR video, decoded on the graphics card. HDR plays without upscaling for now.\n" +
+             "• Subtitles, the controls and the glass are drawn after upscaling, so they stay sharp.\n" +
+             "• If frames start dropping, it turns itself off for that video. The sparkle button in the player shows what it's doing; Ctrl+U turns it on or off.");
+        Credits();
+
+        void Credits() => Note("Models: AnimeJaNai by the-database (CC BY-NC-SA 4.0). Runs on NVIDIA TensorRT.");
+        }
+
+        void Note(string text) => p.Children.Add(new TextBlock { Text = text, FontSize = 12.5, Foreground = (Brush)FindResource("Muted"),
+            TextWrapping = TextWrapping.Wrap, LineHeight = 20, Margin = new Thickness(4, 8, 0, 0) });
 
         void AudioPage()
         {

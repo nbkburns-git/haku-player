@@ -1025,6 +1025,7 @@ public partial class MainWindow : Window
             return;
         }
         var mods = Keyboard.Modifiers;
+        if (key == Key.U && mods == ModifierKeys.Control) { ToggleUpscaleNow(); controls?.Activity(); e.Handled = true; return; } // AI upscaling on/off
         var name = MpvKey(key);
         if (name == null && (mods & (ModifierKeys.Control | ModifierKeys.Alt)) != 0 && key is >= Key.A and <= Key.Z)
             name = key.ToString().ToLowerInvariant();
@@ -1177,6 +1178,9 @@ public partial class MainWindow : Window
         }
         videoAspect = 0;
         lastFill = null; // a new mpv: its zoom-to-fill starts off
+        upscaleActive = false; // and its filter chain is empty
+        videoWidth = videoHeight = 0;
+        ResetUpscale();
         playingEntry = entry;
         autoPop = Settings.Current.AutoPopOut;
         Show(Player);
@@ -1194,7 +1198,8 @@ public partial class MainWindow : Window
             "--drag-and-drop=no", // files dropped on the video come to us instead (DropPlay.cs)
             $@"--input-ipc-server=\\.\pipe\{pipe}",
             "--profile=high-quality",
-            "--hwdec=auto-safe",               // NVDEC/D3D11 HEVC decode on the GPU
+            // decode on the GPU; AI upscaling needs D3D11 frames (vf_hakusr), which d3d11va gives
+            Settings.Current.Upscale && Upscaler.Installed ? "--hwdec=d3d11va,auto-safe" : "--hwdec=auto-safe",
             // shows resume where you left off; openings/endings always play from the start
             $"--save-position-on-quit={(Settings.Current.Resume && entry.Unit != "themes" ? "yes" : "no")}",
             $"--resume-playback={(Settings.Current.Resume && entry.Unit != "themes" ? "yes" : "no")}",
@@ -1228,7 +1233,7 @@ public partial class MainWindow : Window
             _ = Listen(pipe, entry, my);
             controls = new PlayerControls
             {
-                Owner = this, Send = Send, Notify = Toast, Expand = Expand, Ask = Ask,ResumeAllowed = entry.Unit != "themes", Kind = entry.Kind,
+                Owner = this, Send = Send, Notify = Toast, ToggleUpscale = ToggleUpscaleNow, ApplyUpscale = ApplyUpscaleSetting, Expand = Expand, Ask = Ask,ResumeAllowed = entry.Unit != "themes", Kind = entry.Kind,
                 Back = () => OnBack(null, null),
                 Minimize = () => WindowState = WindowState.Minimized,
                 ToggleMaximize = ToggleMaximizeOrFullscreen,
@@ -1239,6 +1244,7 @@ public partial class MainWindow : Window
                 DragWindow = DragFromOverlay,
             };
             controls.SetTitle(entry.Name);
+            controls.SetUpscaleButton(Settings.Current.Upscale, false, Settings.Current.Upscale ? "AI upscaling: waiting for the video (Ctrl+U)" : "AI upscaling: off (Ctrl+U)");
             controls.SetMaximized(WindowState == WindowState.Maximized);
             controls.SetFullscreen(fullscreen);
             // new bars start shown without raising ShownChanged, so clear a hidden cursor left by the last video
@@ -1265,7 +1271,7 @@ public partial class MainWindow : Window
             var r = new StreamReader(c);
             ipc = w;
             await w.WriteLineAsync("""{"command":["observe_property",1,"fullscreen"]}""");
-            foreach (var prop in new[] { "playlist-pos", "pause", "time-pos", "duration", "volume", "mute", "video-params/aspect", "speed", "track-list", "height", "video-format", "sub-delay", "chapter-list" })
+            foreach (var prop in new[] { "playlist-pos", "pause", "time-pos", "duration", "volume", "mute", "video-params/aspect", "speed", "track-list", "height", "width", "container-fps", "frame-drop-count", "video-format", "sub-delay", "chapter-list" })
                 await w.WriteLineAsync($$"""{"command":["observe_property",2,"{{prop}}"]}""");
             string? line;
             while ((line = await r.ReadLineAsync()) != null)
@@ -1294,6 +1300,7 @@ public partial class MainWindow : Window
                         playingIndex = pos;
                         fileChapters = new();
                         segmentsFor = null;
+                        ResetUpscale(); // the next episode may be another size
                         break;
                     case "chapter-list" when d.ValueKind == JsonValueKind.Array:
                         fileChapters = d.EnumerateArray()
@@ -1330,6 +1337,17 @@ public partial class MainWindow : Window
                     case "height" when d.ValueKind == JsonValueKind.Number:
                         videoHeight = d.GetInt32();
                         controls?.SetQuality(videoHeight, videoCodec);
+                        UpdateUpscale(my);
+                        break;
+                    case "width" when d.ValueKind == JsonValueKind.Number:
+                        videoWidth = d.GetInt32();
+                        UpdateUpscale(my);
+                        break;
+                    case "container-fps" when d.ValueKind == JsonValueKind.Number:
+                        videoFps = d.GetDouble();
+                        break;
+                    case "frame-drop-count" when d.ValueKind == JsonValueKind.Number:
+                        CheckUpscaleDrops(d.GetInt64(), my);
                         break;
                     case "video-format" when d.ValueKind == JsonValueKind.String:
                         videoCodec = d.GetString() ?? "";

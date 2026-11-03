@@ -274,11 +274,41 @@ public partial class PlayerControls : UserControl
         if (openMenu == "speed") BuildMenu();
     }
 
+    int qualityHeight;
+    string qualityCodec = "";
+    string? upscaleLabel;
+
     public void SetQuality(int height, string codec)
     {
+        qualityHeight = height;
+        qualityCodec = codec;
         string res = height >= 2000 ? "4K" : height >= 1400 ? "1440p" : height > 0 ? $"{height}p" : "";
-        QualityText.Text = string.Join("  ", new[] { res, codec.ToUpperInvariant() }.Where(x => x != ""));
+        QualityText.Text = string.Join("  ", new[] { res, codec.ToUpperInvariant(), upscaleLabel ?? "" }.Where(x => x != ""));
         Quality.Visibility = QualityText.Text == "" ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    // "AI Balanced" etc. while AI upscaling runs, shown in the quality badge
+    public void SetUpscale(string? label)
+    {
+        upscaleLabel = label;
+        SetQuality(qualityHeight, qualityCodec);
+    }
+
+    public Action ToggleUpscale = () => { };   // MainWindow: on/off for real (saved), applied to this video
+    public Action ApplyUpscale = () => { };    // MainWindow: tier or look changed in the menu
+
+    // The AI button: accent while upscaling, bright when on but not upscaling this video, dimmed when off.
+    public void SetUpscaleButton(bool on, bool active, string tip)
+    {
+        AiBtn.Opacity = on ? 1 : 0.4;
+        AiBtn.Foreground = active ? (Brush)FindResource("Accent") : (Brush)FindResource("Text");
+        AiBtn.ToolTip = tip;
+    }
+
+    void OnAiUpscale(object s, RoutedEventArgs e)
+    {
+        ToggleUpscale();
+        if (openMenu == "settings") BuildMenu();
     }
 
     // mpv's track-list: audio and subtitle tracks with names for the menu.
@@ -668,6 +698,15 @@ public partial class PlayerControls : UserControl
             S.Resume = !S.Resume;
             if (ResumeAllowed) Send(new object[] { "set_property", "save-position-on-quit", S.Resume });
         }));
+
+        Header("AI upscaling");
+        Item("AI upscaling  (Ctrl+U)", S.Upscale, () => { ToggleUpscale(); BuildMenu(); });
+        if (S.Upscale)
+        {
+            Chips("Tier", new[] { ("auto", "Auto"), ("fast", "Fast"), ("balanced", "Balanced"), ("quality", "Quality") }, S.UpscaleTier,
+                t => Change(() => { S.UpscaleTier = t; ApplyUpscale(); }));
+            Chips("Look", new[] { ("sharp", "Sharp"), ("soft", "Soft") }, S.UpscaleLook, l => Change(() => { S.UpscaleLook = l; ApplyUpscale(); }));
+        }
 
         // these edit the defaults for this kind of video (anime, or TV shows & movies)
         var pref = S.LangFor(Kind);

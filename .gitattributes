@@ -3,3 +3,4 @@
 *.gif binary
 *.ico binary
 *.ttf binary
+*.sh text eol=lf

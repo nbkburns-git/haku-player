@@ -49,6 +49,9 @@ public sealed class Settings
 {
     public bool Autoplay { get; set; } = true;        // go to the next video when one ends
     public bool AutoPopOut { get; set; }              // start every video in the always-on-top pop-out
+    public bool Upscale { get; set; } = true;         // AI upscaling of videos smaller than the screen (Upscaler.cs)
+    public string UpscaleTier { get; set; } = "auto"; // "auto", "fast", "balanced", "quality"
+    public string UpscaleLook { get; set; } = "sharp"; // "sharp" (AnimeJaNai V3 Sharp1) or "soft" (V3)
     public bool Resume { get; set; } = true;          // continue where you left off
     public string AudioLang { get; set; } = "jpn";    // "" = file default, "jpn", "eng"
     public string SubLang { get; set; } = "eng";      // subtitle language: "" = file default, "eng", "jpn"

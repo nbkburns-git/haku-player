@@ -73,6 +73,8 @@
         <Button x:Name="SettingsBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnSettingsMenu" AutomationProperties.Name="Settings" ToolTip="Settings" Content="&#xE713;" Margin="2,0,0,0"/>
         <!-- autoplay next video: bright when on, dimmed when off -->
         <Button x:Name="AutoBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnAutoplay" AutomationProperties.Name="Autoplay" ToolTip="Autoplay: on" Content="&#xE8EE;" Margin="2,0,0,0"/>
+        <!-- AI upscaling: accent while it's upscaling, bright when on, dimmed when off; the tooltip says why -->
+        <Button x:Name="AiBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnAiUpscale" AutomationProperties.Name="AI upscaling" ToolTip="AI upscaling (Ctrl+U)" Content="&#xF4A5;" Margin="2,0,0,0"/>
         <Button x:Name="SpeedBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnSpeedMenu" AutomationProperties.Name="Speed" ToolTip="Playback speed"
                 Content="1×" FontFamily="Segoe UI Variable Display, Segoe UI" FontSize="14" FontWeight="SemiBold" Width="52" Margin="2,0,0,0"/>
         <Button x:Name="TracksBtn" DockPanel.Dock="Right" Style="{StaticResource Icon}" Click="OnTracksMenu" AutomationProperties.Name="Tracks" ToolTip="Audio &amp; subtitles" Content="&#xE7F0;" Margin="8,0,0,0"/>

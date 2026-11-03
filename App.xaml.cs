@@ -50,6 +50,13 @@ public partial class App : Application
         Debug.Assert(AnimePlayer.MainWindow.ShowGuess(@"x\[Grp] Naruto - 012 [1080p].mkv") == "Naruto");
         Debug.Assert(AnimePlayer.MainWindow.ShowGuess(@"x\Rick.and.Morty.S01E02.1080p.mkv") == "Rick and Morty");
         Debug.Assert(AnimePlayer.MainWindow.ShowGuess(@"x\KimetsuNoYaiba-OP1.webm", true) == "Kimetsu No Yaiba");
+        // Self-check for the upscaler's Auto tier (speeds relative to an RTX 4070)
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 1.0)?.Key == "balanced"); // 4070, 1080p film
+        Debug.Assert(Upscaler.AutoFor(1280, 720, 23.976, 1.0)?.Key == "quality");   // 720p leaves room for Compact
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 0.55)?.Key == "fast");    // RTX 3060
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 60, 1.0)?.Key == "fast");         // 60 fps video
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 2.2)?.Key == "quality");  // RTX 4090
+        Debug.Assert(Upscaler.AutoFor(3840, 2160, 23.976, 0.3) == null);            // nothing keeps up
 #endif
         base.OnStartup(e);
     }
