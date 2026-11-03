@@ -37,7 +37,9 @@ $TestWindow = $null # or set it in media.local.ps1
 $localMedia = Join-Path $PSScriptRoot "media.local.ps1"
 if (Test-Path $localMedia) { . $localMedia }
 
-Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
+Add-Type -Namespace HakuTest -Name Win -MemberDefinition '[StructLayout(LayoutKind.Sequential)] public struct R { public int L, T, Rt, B; } [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out R r); [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);'
+[HakuTest.Win]::SetProcessDpiAwarenessContext([IntPtr](-4)) | Out-Null   # per-monitor pixels, as Haku and HAKU_TEST_WINDOW use
 $UIA = [System.Windows.Automation.AutomationElement]
 $Results = New-Object System.Collections.Generic.List[object]
 $RunStart = Get-Date
@@ -156,6 +158,14 @@ try {
             $resumed = WaitFor { if (Loading) { $script:sawLoading = $true }; $r = QN 'vf-metadata/hakusr/frames'; if ($r -gt $script:maxReady) { $script:maxReady = $r }; (Q 'pause') -eq 'no' } 20
             $outW = QN 'video-out-params/w'
             $watch = Watch 10
+            if ($Window -or $TestWindow) {
+                # playing reshapes the window to the video: it must stay on the monitor it was put on
+                $want = [int]((($(if ($Window) { $Window } else { $TestWindow })) -split ',')[0])
+                $rect = New-Object HakuTest.Win+R; [HakuTest.Win]::GetWindowRect($Hk.Proc.MainWindowHandle, [ref]$rect) | Out-Null
+                $screen = [System.Windows.Forms.Screen]::FromPoint((New-Object System.Drawing.Point($want, 200)))
+                $inside = $rect.L -ge $screen.Bounds.Left -and $rect.Rt -le $screen.Bounds.Right
+                Report 'stays-on-monitor' $inside "window at $($rect.L),$($rect.T) to $($rect.Rt),$($rect.B), its monitor spans $($screen.Bounds.Left) to $($screen.Bounds.Right)"
+            }
             if (Want 'startup') {
                 Report 'startup' ($pausedFirst -and $resumed -ge 0 -and $outW -ge 2 * $w - 1 -and $watch.Drops -eq 0 -and $maxReady -ge 0.75 * $watch.Cap) `
                     "paused first: $pausedFirst, playing after $resumed s with $maxReady/$($watch.Cap) frames ready, $w -> $outW px, loading panel: $sawLoading, 10 s: $($watch.Drops) drops, buffer never below $($watch.MinReady)"
@@ -285,13 +295,13 @@ try {
 
     if (Want 'rtx') {
         if (-not ($Media.LiveAction -and (Test-Path -LiteralPath $Media.LiveAction) -and $Media.TvLibrary)) { Skip 'rtx' "no live-action file or TV library in media.local.ps1" } else {
-            # a TV show from your TV library gets NVIDIA's RTX Video, not the anime model
+            # a TV show from your TV library gets NVIDIA's RTX Video (sized to fill the screen's height), not the anime model
             Start-Haku $Media.LiveAction @{ UpscaleLiveAction = 'rtx'; Libs = @(@{ Id = 'tv'; Name = 'TV'; Folders = @(@{ Path = $Media.TvLibrary; Kind = 'tv' }); Home = $true }) } | Out-Null
             $w = 0; WaitFor { ($script:w = QN 'width') -gt 0 } 20 | Out-Null
-            $on = WaitFor { (AiTip) -match 'RTX Video upscaling on' -and (QN 'video-out-params/w') -ge 2 * $script:w - 2 -and (Q 'pause') -eq 'no' } 20
+            $on = WaitFor { (AiTip) -match 'RTX Video upscaling on' -and (QN 'video-out-params/w') -gt $script:w -and (Q 'pause') -eq 'no' } 20
             $vf = Q 'vf'; $tip = AiTip
             $watch = Watch 8
-            $badge = [bool]((Window).FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -match '4K\s+\w+\s+RTX$' })
+            $badge = [bool]((Window).FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -match '\s+RTX$' })
             Report 'rtx' ($on -ge 0 -and $vf -match 'd3d11vpp' -and $vf -notmatch 'haku_sr' -and $tip -match 'RTX Video upscaling on' -and $badge -and $watch.Drops -eq 0) "on after $on s: '$(($tip -split "`n")[0])', badge says RTX: $badge, 8 s: $($watch.Drops) drops"
             Stop-Haku
         }

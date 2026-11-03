@@ -284,7 +284,7 @@ public partial class MainWindow
         }
     }
 
-    // The height of the screen Haku is on, in real pixels (it's per-monitor DPI aware).
+    // The height of the screen Haku is on, in real pixels (Haku is per-monitor DPI aware, so this is exact).
     int ScreenHeight()
     {
         try { return System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).Bounds.Height; }
