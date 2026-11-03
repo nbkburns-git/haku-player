@@ -71,7 +71,24 @@ public partial class MainWindow
         guardFrom = DateTime.MaxValue;
         upscaleKey = null;
         upscaleBlocked = false;
+        tierLimit = int.MaxValue;
         dropBase = -1;
+    }
+
+    int tierLimit = int.MaxValue; // this video: Auto may use no tier slower than Tiers[tierLimit] (it couldn't keep up)
+    int tierIndex = -1;           // the tier upscaling now (index into Upscaler.Tiers, fastest first)
+    DateTime lowSince = DateTime.MaxValue;
+
+    // Auto's pick can't keep up with this video (frames dropping, or the AI buffer running dry): use the next faster
+    // tier for it. False when there's none (or you chose the tier yourself), so the caller turns upscaling off.
+    bool StepDown(int my)
+    {
+        if (Settings.Current.UpscaleTier != "auto" || tierIndex <= 0) return false;
+        tierLimit = tierIndex - 1;
+        upscaleKey = null;
+        UpdateUpscale(my);
+        Toast($"AI upscaling: {Upscaler.Tiers[tierLimit].Name} for this video, to keep up");
+        return true;
     }
 
     // Settings changed: apply to the video that's playing.
@@ -99,6 +116,9 @@ public partial class MainWindow
         if (videoWidth <= 0 || videoHeight <= 0) return;
         string why = "dropped frames on this video, so it turned itself off";
         var tier = upscaleBlocked ? null : Upscaler.Choose(videoWidth, videoHeight, videoFps, out why);
+        if (tier != null && Settings.Current.UpscaleTier == "auto" && Array.IndexOf(Upscaler.Tiers, tier) > tierLimit)
+            tier = Upscaler.Tiers[tierLimit]; // stepped down for this video
+        tierIndex = tier == null ? -1 : Array.IndexOf(Upscaler.Tiers, tier);
         string look = Settings.Current.UpscaleLook;
         string model = tier == null ? "" : Upscaler.ModelFile(tier, look);
         int w = videoWidth, h = videoHeight;
@@ -177,6 +197,13 @@ public partial class MainWindow
             string? until = await Ask(new object[] { "get_property_string", $"vf-metadata/{Upscaler.Label}/until" });
             string? cap = await Ask(new object[] { "get_property_string", $"vf-metadata/{Upscaler.Label}/cap" });
             if (my != session || !upscaleActive || upscaleKey != key) break;
+            // the AI buffer nearly empty for 2 s while playing (and not just after a seek): this tier can't keep up
+            if (int.TryParse(frames, out int ready) && ready <= 2 && controls is { Paused: false } && !aiHolding && DateTime.UtcNow > guardFrom)
+            {
+                if (lowSince == DateTime.MaxValue) lowSince = DateTime.UtcNow;
+                else if ((DateTime.UtcNow - lowSince).TotalSeconds >= 2) { lowSince = DateTime.MaxValue; if (StepDown(my)) break; }
+            }
+            else lowSince = DateTime.MaxValue;
             controls?.SetAiBuffer(int.TryParse(frames, out int n) ? n : 0, int.TryParse(cap, out int c) ? c : 0,
                 double.TryParse(until, System.Globalization.NumberStyles.Float, inv, out double u) ? u : -1);
             await Task.Delay(250);
@@ -191,6 +218,8 @@ public partial class MainWindow
         if (!upscaleActive || now < guardFrom) { dropBase = -1; return; } // drops in the grace period don't count later either
         if (dropBase < 0 || (now - dropAt).TotalSeconds > 10) { dropBase = drops; dropAt = now; return; }
         if (drops - dropBase < 12) return;
+        dropBase = -1;
+        if (StepDown(my)) return; // a faster tier first
         upscaleBlocked = true;
         UpdateUpscale(my);
         Toast("AI upscaling was dropping frames, so it's off for this video");
