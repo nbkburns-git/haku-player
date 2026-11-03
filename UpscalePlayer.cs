@@ -69,7 +69,7 @@ public partial class MainWindow
         {
             Send(new object[] { "vf", "remove", "@" + Upscaler.Label });
             upscaleActive = false;
-            controls?.SetUpscale(null);
+            controls?.SetUpscale(0);
         }
         if (tier == null) { controls?.SetUpscaleButton(Settings.Current.Upscale, false, $"AI upscaling: {why}"); return; }
 
@@ -103,7 +103,7 @@ public partial class MainWindow
         if (took)
         {
             guardFrom = DateTime.UtcNow.AddSeconds(3);
-            controls?.SetUpscale($"AI {tier.Name}");
+            controls?.SetUpscale(h * 2);
             controls?.SetUpscaleButton(true, true, $"AI upscaling on: {tier.Name}, {(look == "soft" ? "soft" : "sharp")} look, {w}×{h} → {w * 2}×{h * 2} (Ctrl+U)");
             Toast($"AI upscaling on: {tier.Name}, {(look == "soft" ? "soft" : "sharp")} look");
         }

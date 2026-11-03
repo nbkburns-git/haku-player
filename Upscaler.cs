@@ -85,18 +85,23 @@ static class Upscaler
     }
 
     // The best tier that keeps up with this video (15% headroom), or null if none would.
-    public static Tier? Auto(int w, int h, double fps) => AutoFor(w, h, fps, Speed);
+    public static Tier? Auto(int w, int h, double fps) => Speed <= 0 ? null : Pick(w, h, fps, Fps1080);
 
-    internal static Tier? AutoFor(int w, int h, double fps, double speed)
+    internal static Tier? AutoFor(int w, int h, double fps, double speed) => speed <= 0 ? null : Pick(w, h, fps, t => t.Fps4070 * speed);
+
+    static Tier? Pick(int w, int h, double fps, Func<Tier, double> fps1080)
     {
-        if (speed <= 0) return null;
         double pixels = (double)w * h / (1920.0 * 1080.0);
         double need = Math.Max(fps, 23.976) * 1.15;
         Tier? best = null;
         foreach (var t in Tiers)
-            if (t.Fps4070 * speed / pixels >= need) best = t;
+            if (fps1080(t) / pixels >= need) best = t;
         return best;
     }
+
+    // A tier's 1080p speed on this PC, measured by Detect when it has run on this GPU.
+    public static double? Measured(Tier t) =>
+        Settings.Current.UpscaleMeasuredGpu == Gpu && Settings.Current.UpscaleMeasured.TryGetValue(t.Key, out var f) ? f : null;
 
     // What to use for this video, or null with the reason (for the player button's tooltip).
     public static Tier? Choose(int w, int h, double fps, int screenHeight, out string why)
@@ -114,8 +119,8 @@ static class Upscaler
         return t;
     }
 
-    // Estimated speed of a tier on this PC for 1080p video (from the RTX 4070 measurements).
-    public static double EstimateFps(Tier t) => t.Fps4070 * Speed;
+    // A tier's speed on this PC for 1080p video: measured by Detect, else estimated from the RTX 4070 measurements.
+    public static double Fps1080(Tier t) => Measured(t) ?? t.Fps4070 * Speed;
 
     public static bool Prepared(Tier t, string look) => File.Exists(EngineFile(ModelFile(t, look)));
 
@@ -125,9 +130,61 @@ static class Upscaler
     delegate int BuildFn([MarshalAs(UnmanagedType.LPWStr)] string onnx, [MarshalAs(UnmanagedType.LPWStr)] string engine, int w, int h);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     delegate IntPtr ErrFn();
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    delegate double BenchFn([MarshalAs(UnmanagedType.LPWStr)] string engine, int w, int h, int frames);
     static BuildFn? build;
     static ErrFn? lastError;
+    static BenchFn? bench;
     static readonly Dictionary<string, Task<string?>> building = new();
+
+    static void LoadLib()
+    {
+        if (build != null) return;
+        IntPtr lib = NativeLibrary.Load(Lib);
+        lastError = Marshal.GetDelegateForFunctionPointer<ErrFn>(NativeLibrary.GetExport(lib, "hsr_last_error"));
+        if (NativeLibrary.TryGetExport(lib, "hsr_benchmark", out var b)) bench = Marshal.GetDelegateForFunctionPointer<BenchFn>(b); // older packs lack it
+        build = Marshal.GetDelegateForFunctionPointer<BuildFn>(NativeLibrary.GetExport(lib, "hsr_build_engine"));
+    }
+
+    // "Detect best for this PC": prepares each tier's model and times it on this GPU (1080p frames), so Auto picks from
+    // measured speeds instead of the GPU name table. About 10 s plus any engines not built yet. Returns null when done, else why not.
+    public static async Task<string?> Detect(string look, Action<string> progress)
+    {
+        var measured = new Dictionary<string, double>();
+        foreach (var t in Tiers)
+        {
+            string model = ModelFile(t, look);
+            if (!File.Exists(EngineFile(model))) progress($"Preparing {t.Name}…");
+            if (await Prepare(model) is string err) return err;
+            progress($"Measuring {t.Name}…");
+            string? fail = null;
+            double fps = await Task.Run(() =>
+            {
+                try
+                {
+                    LoadLib();
+                    if (bench == null) { fail = "the Haku Upscaler pack is too old for Detect"; return -1; }
+                    // a short probe (it also brings the GPU up to full clocks), then three ~3 s runs; the median ignores a
+                    // run slowed by something else using the GPU for a moment
+                    double probe = bench(EngineFile(model), 1920, 1080, 20);
+                    var runs = new List<double>();
+                    for (int i = 0; i < 3 && probe > 0; i++) runs.Add(bench(EngineFile(model), 1920, 1080, Math.Clamp((int)(probe * 3), 30, 600)));
+                    runs.Sort();
+                    double f = probe < 0 || runs[0] < 0 ? -1 : runs[1];
+                    if (f < 0) fail = Marshal.PtrToStringAnsi(lastError!()) ?? "benchmark failed";
+                    return f;
+                }
+                catch (Exception ex) { fail = ex.Message; return -1; }
+            });
+            if (fail != null) return fail;
+            measured[t.Key] = Math.Round(fps, 1);
+        }
+        var s = Settings.Current;
+        s.UpscaleMeasured = measured;
+        s.UpscaleMeasuredGpu = Gpu;
+        s.Save();
+        return null;
+    }
 
     // Build the engine for this model if it isn't cached yet (once per model, about 20 s). Returns null when ready, else why not.
     public static Task<string?> Prepare(string model)
@@ -142,14 +199,9 @@ static class Upscaler
                 try
                 {
                     if (!File.Exists(model)) return $"model missing: {Path.GetFileName(model)}";
-                    if (build == null)
-                    {
-                        IntPtr lib = NativeLibrary.Load(Lib);
-                        build = Marshal.GetDelegateForFunctionPointer<BuildFn>(NativeLibrary.GetExport(lib, "hsr_build_engine"));
-                        lastError = Marshal.GetDelegateForFunctionPointer<ErrFn>(NativeLibrary.GetExport(lib, "hsr_last_error"));
-                    }
+                    LoadLib();
                     Directory.CreateDirectory(Engines);
-                    return build(model, engine, 1920, 1080) == 0 ? null : Marshal.PtrToStringAnsi(lastError!()) ?? "engine build failed";
+                    return build!(model, engine, 1920, 1080) == 0 ? null : Marshal.PtrToStringAnsi(lastError!()) ?? "engine build failed";
                 }
                 catch (Exception ex) { return ex.Message; }
                 finally { lock (building) building.Remove(engine); }

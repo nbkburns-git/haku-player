@@ -325,7 +325,7 @@ public partial class MainWindow : Window
     // Blobs only move when someone can see them: not while scrolling, playing, minimized, or while another app is in front.
     void UpdateBlobs()
     {
-        bool run = Settings.Current.MovingBackground && !blobsScrolling && !Player.IsVisible
+        bool run = Settings.Current.MovingBackground && !blobsScrolling && !Player.IsVisible && upscaleDetecting == null // Detect times the GPU
                    && (IsActive || Settings.Current.MovingAlways) && WindowState != WindowState.Minimized;
         foreach (var c in blobClocks) { if (run) c.Go(); else c.Hold(); }
         bool walls = run && Home.IsVisible; // cover walls only drift on the home page
@@ -1179,6 +1179,7 @@ public partial class MainWindow : Window
         videoAspect = 0;
         lastFill = null; // a new mpv: its zoom-to-fill starts off
         upscaleActive = false; // and its filter chain is empty
+        controls?.SetUpscale(0);
         videoWidth = videoHeight = 0;
         ResetUpscale();
         playingEntry = entry;

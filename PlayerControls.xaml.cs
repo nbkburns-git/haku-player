@@ -276,21 +276,24 @@ public partial class PlayerControls : UserControl
 
     int qualityHeight;
     string qualityCodec = "";
-    string? upscaleLabel;
+    int upscaleHeight;
+
+    static string Res(int h) => h >= 2000 ? "4K" : h >= 1400 ? "1440p" : h > 0 ? $"{h}p" : "";
 
     public void SetQuality(int height, string codec)
     {
         qualityHeight = height;
         qualityCodec = codec;
-        string res = height >= 2000 ? "4K" : height >= 1400 ? "1440p" : height > 0 ? $"{height}p" : "";
-        QualityText.Text = string.Join("  ", new[] { res, codec.ToUpperInvariant(), upscaleLabel ?? "" }.Where(x => x != ""));
+        string res = Res(height);
+        if (upscaleHeight > 0 && res != "") res += $" → {Res(upscaleHeight)}";
+        QualityText.Text = string.Join("  ", new[] { res, codec.ToUpperInvariant(), upscaleHeight > 0 ? "AI" : "" }.Where(x => x != ""));
         Quality.Visibility = QualityText.Text == "" ? Visibility.Collapsed : Visibility.Visible;
     }
 
-    // "AI Balanced" etc. while AI upscaling runs, shown in the quality badge
-    public void SetUpscale(string? label)
+    // the badge reads "1080p → 4K  H264  AI" while AI upscaling runs; 0 = not upscaling
+    public void SetUpscale(int outHeight)
     {
-        upscaleLabel = label;
+        upscaleHeight = outHeight;
         SetQuality(qualityHeight, qualityCodec);
     }
 

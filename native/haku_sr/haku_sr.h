@@ -53,6 +53,10 @@ HSR_API void hsr_destroy(hsr *s);
 // HSR_MAX_W x HSR_MAX_H, and save it to engine_path. Slow (seconds): call it from a background thread. Returns 0 on success.
 HSR_API int hsr_build_engine(const wchar_t *onnx_path, const wchar_t *engine_path, int in_w, int in_h);
 
+// Speed of an engine on this PC: frames per second for in_w x in_h input (synthetic frames, its own device), or < 0 on
+// failure. Takes a few seconds: call it from a background thread.
+HSR_API double hsr_benchmark(const wchar_t *engine_path, int in_w, int in_h, int frames);
+
 #ifdef __cplusplus
 }
 #endif

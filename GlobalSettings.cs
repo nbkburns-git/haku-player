@@ -60,6 +60,7 @@ public partial class MainWindow
 
     string settingsPage = "Library";
     bool upscalePreparing; // "Prepare all now" is running
+    string? upscaleDetecting; // "Detect best for this PC" is running: its progress text
     static readonly (string Key, string Icon, string Name)[] SettingsPages =
     {
         ("Library", "", "Library"),
@@ -342,6 +343,33 @@ public partial class MainWindow
         Section(p, "Model");
         Chips(p, "Speed and quality", new[] { ("auto", "Auto"), ("fast", "Fast"), ("balanced", "Balanced"), ("quality", "Quality") }, S.UpscaleTier,
             v => Change(() => { S.UpscaleTier = v; ApplyUpscaleSetting(); }));
+        var detect = new Button { Style = (Style)FindResource("Glass"), Padding = new Thickness(16, 8, 16, 8), FontSize = 14, Margin = new Thickness(4, 6, 0, 0),
+            HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = upscaleDetecting == null && !upscalePreparing,
+            Content = upscaleDetecting ?? (Upscaler.Measured(Upscaler.Tiers[0]) != null ? "Detect again" : "Detect best for this PC") };
+        System.Windows.Automation.AutomationProperties.SetName(detect, "Detect best AI upscaling for this PC");
+        detect.Click += async (_, _) =>
+        {
+            upscaleDetecting = "Starting…";
+            UpdateBlobs(); // still background while measuring, so it doesn't share the GPU
+            BuildGlobalSettings();
+            string? err = await Upscaler.Detect(S.UpscaleLook, msg => { upscaleDetecting = msg; if (SettingsLayer.IsVisible) BuildGlobalSettings(); });
+            upscaleDetecting = null;
+            UpdateBlobs();
+            if (err == null)
+            {
+                S.UpscaleTier = "auto"; // Auto now picks from the measured speeds
+                S.Save();
+                var best = Upscaler.Auto(1920, 1080, 23.976);
+                Toast(best == null ? "Measured: no tier keeps up with 1080p on this PC" : $"Best for this PC: {best.Name} ({Upscaler.Fps1080(best):0} fps at 1080p)");
+                ApplyUpscaleSetting();
+            }
+            else Toast($"Couldn't detect: {err}");
+            if (SettingsLayer.IsVisible) BuildGlobalSettings();
+        };
+        p.Children.Add(detect);
+        Note(upscaleDetecting != null ? "Timing each tier on your graphics card. Pausing the video gives the most accurate result."
+            : Upscaler.Measured(Upscaler.Tiers[0]) != null ? "Speeds below were measured on this PC. Auto picks the best tier that keeps up with each video."
+            : "Times each tier on your graphics card (about 10 seconds, longer the first time) and sets Auto to use the results.");
         Chips(p, "Look", new[] { ("sharp", "Sharp"), ("soft", "Soft") }, S.UpscaleLook, v => Change(() => { S.UpscaleLook = v; ApplyUpscaleSetting(); }));
         Note(S.UpscaleLook == "soft" ? "Soft: AnimeJaNai V3, cleaner and closer to the source." : "Sharp: AnimeJaNai V3 Sharp1, crisper lines and more detail.");
 
@@ -364,12 +392,12 @@ public partial class MainWindow
         foreach (var t in Upscaler.Tiers)
         {
             grid.RowDefinitions.Add(new RowDefinition());
-            double fps = Upscaler.EstimateFps(t);
+            double fps = Upscaler.Fps1080(t);
             bool ready = Upscaler.Prepared(t, S.UpscaleLook);
             missing |= !ready;
             Cell(row, 0, t.Name + (auto == t ? "  · Auto" : ""), bold: auto == t);
             Cell(row, 1, t.Size, muted: true);
-            Cell(row, 2, $"~{fps:0} fps", muted: fps < 27.6);
+            Cell(row, 2, $"{(Upscaler.Measured(t) != null ? "" : "~")}{fps:0} fps", muted: fps < 27.6);
             if (fps < 27.6) slow.Add(t.Name);
             Cell(row, 3, ready ? "Ready" : "Not prepared", accent: ready, muted: !ready);
             row++;
@@ -381,7 +409,7 @@ public partial class MainWindow
         if (missing)
         {
             var prep = new Button { Style = (Style)FindResource("Glass"), Content = upscalePreparing ? "Preparing…" : "Prepare all now", Padding = new Thickness(16, 8, 16, 8),
-                FontSize = 14, Margin = new Thickness(4, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = !upscalePreparing };
+                FontSize = 14, Margin = new Thickness(4, 6, 0, 0), HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = !upscalePreparing && upscaleDetecting == null };
             System.Windows.Automation.AutomationProperties.SetName(prep, "Prepare AI upscaling models");
             prep.Click += async (_, _) =>
             {

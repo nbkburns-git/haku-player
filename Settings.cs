@@ -52,6 +52,8 @@ public sealed class Settings
     public bool Upscale { get; set; } = true;         // AI upscaling of videos smaller than the screen (Upscaler.cs)
     public string UpscaleTier { get; set; } = "auto"; // "auto", "fast", "balanced", "quality"
     public string UpscaleLook { get; set; } = "sharp"; // "sharp" (AnimeJaNai V3 Sharp1) or "soft" (V3)
+    public string UpscaleMeasuredGpu { get; set; } = ""; // the GPU "Detect best for this PC" measured on
+    public Dictionary<string, double> UpscaleMeasured { get; set; } = new(); // tier key -> measured fps for 1080p on that GPU
     public bool Resume { get; set; } = true;          // continue where you left off
     public string AudioLang { get; set; } = "jpn";    // "" = file default, "jpn", "eng"
     public string SubLang { get; set; } = "eng";      // subtitle language: "" = file default, "eng", "jpn"

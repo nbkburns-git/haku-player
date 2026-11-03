@@ -595,3 +595,61 @@ done:
     delete b;
     return ret;
 }
+
+// Speed of an engine on this PC: upscales `frames` synthetic in_w x in_h frames on its own D3D11 device and returns frames
+// per second, or a negative number on failure (see hsr_last_error). Takes a few seconds; call it from a background thread.
+extern "C" HSR_API double hsr_benchmark(const wchar_t *engine_path, int in_w, int in_h, int frames)
+{
+    ID3D11Device *dev = nullptr;
+    ID3D11DeviceContext *ctx = nullptr;
+    ID3D11Multithread *mt = nullptr;
+    ID3D11Texture2D *in = nullptr, *out = nullptr;
+    ID3D11Query *q = nullptr;
+    hsr *s = nullptr;
+    double fps = -1;
+    D3D_FEATURE_LEVEL fl[] = {D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0};
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_VIDEO_SUPPORT, fl, 2,
+                                 D3D11_SDK_VERSION, &dev, nullptr, &ctx))) { set_err("benchmark: no D3D11 device"); return -1; }
+    if (SUCCEEDED(dev->QueryInterface(__uuidof(ID3D11Multithread), (void **)&mt))) mt->SetMultithreadProtected(TRUE);
+    {
+        const int th = (in_h + 15) & ~15; // decoder-style padded height
+        std::vector<uint8_t> nv12((size_t)in_w * th * 3 / 2, 128);
+        for (size_t i = 0; i < (size_t)in_w * th; i++) nv12[i] = (uint8_t)(16 + (i * 7 % 220)); // some detail, not a flat frame
+        D3D11_TEXTURE2D_DESC td = {};
+        td.Width = in_w; td.Height = th; td.MipLevels = 1; td.ArraySize = 1; td.Format = DXGI_FORMAT_NV12;
+        td.SampleDesc.Count = 1; td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_DECODER;
+        D3D11_SUBRESOURCE_DATA sd = {nv12.data(), (UINT)in_w, 0};
+        if (FAILED(dev->CreateTexture2D(&td, &sd, &in))) { set_err("benchmark: couldn't create the test frame"); goto done; }
+        s = hsr_create(dev, engine_path, in_w, in_h);
+        if (!s) goto done; // hsr_create set the error
+        int ow, oh;
+        hsr_output_size(s, &ow, &oh);
+        D3D11_TEXTURE2D_DESC od = {};
+        od.Width = ow; od.Height = oh; od.MipLevels = 1; od.ArraySize = 1; od.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        od.SampleDesc.Count = 1; od.Usage = D3D11_USAGE_DEFAULT; od.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+        if (FAILED(dev->CreateTexture2D(&od, nullptr, &out))) { set_err("benchmark: couldn't create the output frame"); goto done; }
+        D3D11_QUERY_DESC qd = {D3D11_QUERY_EVENT, 0};
+        dev->CreateQuery(&qd, &q);
+        hsr_yuv2rgb csp = {{1, 0, 1.5748f, 1, -0.1873f, -0.4681f, 1, 1.8556f, 0}, {-0.7874f, 0.3277f, -0.9278f}}; // BT.709 full range
+        for (int i = 0; i < 10; i++) if (hsr_process(s, in, 0, &csp, out) != 0) goto done; // warm-up
+        ctx->End(q);
+        while (ctx->GetData(q, nullptr, 0, 0) == S_FALSE) {}
+        LARGE_INTEGER f, t0, t1;
+        QueryPerformanceFrequency(&f);
+        QueryPerformanceCounter(&t0);
+        for (int i = 0; i < frames; i++) if (hsr_process(s, in, 0, &csp, out) != 0) goto done;
+        ctx->End(q);
+        while (ctx->GetData(q, nullptr, 0, 0) == S_FALSE) {}
+        QueryPerformanceCounter(&t1);
+        fps = frames * (double)f.QuadPart / (double)(t1.QuadPart - t0.QuadPart);
+    }
+done:
+    if (s) hsr_destroy(s);
+    if (q) q->Release();
+    if (out) out->Release();
+    if (in) in->Release();
+    if (mt) mt->Release();
+    ctx->Release();
+    dev->Release();
+    return fps;
+}
