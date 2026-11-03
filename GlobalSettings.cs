@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -331,7 +331,7 @@ public partial class MainWindow
         Section(p, "AI upscaling");
         Toggle(p, "AI upscaling", !Upscaler.Installed ? @"Needs the Haku Upscaler pack in %LOCALAPPDATA%\Haku Upscaler"
                 : Upscaler.Speed <= 0 ? "Needs an NVIDIA RTX graphics card"
-                : $"Redraws videos smaller than your screen at twice the size with AnimeJaNai, live on your {gpu}",
+                : $"Redraws videos at twice the size with AnimeJaNai, live on your {gpu}",
             S.Upscale, () => Change(() => { S.Upscale = !S.Upscale; ApplyUpscaleSetting(); }));
         if (!S.Upscale || !Upscaler.Installed || Upscaler.Speed <= 0)
         {
@@ -427,7 +427,7 @@ public partial class MainWindow
         }
 
         Section(p, "When it runs");
-        Note("• Videos smaller than your screen, up to 1920×1080 (a 4K file plays as it is).\n" +
+        Note("• Videos up to 2560×1728 are drawn at twice the size (a 4K file plays as it is).\n" +
              "• SDR video, decoded on the graphics card. HDR plays without upscaling for now.\n" +
              "• Subtitles, the controls and the glass are drawn after upscaling, so they stay sharp.\n" +
              "• If frames start dropping, it turns itself off for that video. The sparkle button in the player shows what it's doing; Ctrl+U turns it on or off.");

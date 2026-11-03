@@ -223,6 +223,9 @@ public partial class PlayerControls : UserControl
 
     public void SetDuration(double d) { duration = d; Redraw(); DrawMarks(); }
 
+    double cacheEnd; // mpv's demuxer-cache-time: the file is loaded up to here
+    public void SetCache(double end) { cacheEnd = end; Redraw(); }
+
     public void SetTime(double t)
     {
         if (dragging) return;
@@ -304,8 +307,27 @@ public partial class PlayerControls : UserControl
     public void SetUpscaleButton(bool on, bool active, string tip)
     {
         AiBtn.Opacity = on ? 1 : 0.4;
-        AiBtn.Foreground = active ? (Brush)FindResource("Accent") : (Brush)FindResource("Text");
-        AiBtn.ToolTip = tip;
+        // upscaling: the AI green of the timeline's buffer, glowing
+        AiBtn.Foreground = active ? AiGreen : (Brush)FindResource("Text");
+        if (active) AiBtn.Effect = new System.Windows.Media.Effects.DropShadowEffect { Color = AiGreen.Color, BlurRadius = 20, ShadowDepth = 0, Opacity = 1 };
+        else AiBtn.ClearValue(EffectProperty); // back to the button style's own look
+        aiTip = tip;
+        AiBtn.ToolTip = AiTip();
+    }
+
+    static readonly SolidColorBrush AiGreen = new(Color.FromRgb(0x3D, 0xDC, 0x84)); // also the timeline's AiFill
+    string aiTip = "";
+    int aiFrames, aiCap;
+    double aiUntil = -1; // the last upscaled frame ready ahead (seconds); -1: none
+    string AiTip() => aiCap > 0 ? $"{aiTip}\n{aiFrames} of {aiCap} frames ready ahead" : aiTip;
+
+    // The AI filter's queue: shown in green on the timeline and in the AI button's tooltip.
+    public void SetAiBuffer(int frames, int cap, double until)
+    {
+        if (frames == aiFrames && cap == aiCap && Math.Abs(until - aiUntil) < 0.01) return;
+        aiFrames = frames; aiCap = cap; aiUntil = frames > 0 ? until : -1;
+        AiBtn.ToolTip = AiTip();
+        Redraw();
     }
 
     void OnAiUpscale(object s, RoutedEventArgs e)
@@ -439,6 +461,11 @@ public partial class PlayerControls : UserControl
         // knob travels within the track so it's never clipped at 0% or 100%; whole pixels, so sub-pixel creep doesn't redraw
         double x = Math.Round(f * Math.Max(0, w - Knob.Width));
         Fill.Width = x + Knob.Width / 2;
+        CacheFill.Width = duration > 0 ? Math.Round(Math.Clamp(cacheEnd / duration, 0, 1) * w) : 0;
+        // a second of frames is about a pixel on a long video, so past the knob the green also grows with how full the
+        // queue is (up to 24 px when full): it shows filling up and running down
+        double knobEdge = x + Knob.Width, tip = aiCap > 0 ? 24.0 * aiFrames / aiCap : 0;
+        AiFill.Width = aiUntil >= 0 && duration > 0 ? Math.Min(w, Math.Max(Math.Round(Math.Clamp(aiUntil / duration, 0, 1) * w), Math.Round(knobEdge + tip))) : 0;
         Knob.Margin = new Thickness(x, 0, 0, 0);
         Current.Text = Fmt(time);
         Duration.Text = Fmt(duration);
@@ -863,9 +890,13 @@ public partial class PlayerControls : UserControl
 
     double TimeAt(MouseEventArgs e) => Math.Clamp(e.GetPosition(Timeline).X / Math.Max(1, Timeline.ActualWidth), 0, 1) * duration;
 
+    public Action? SeekStarted, SeekEnded; // the AI buffer (UpscalePlayer.cs)
+    public Action<double, string>? Seeking; // every seek, just before it's sent (time, mpv seek mode)
+
     void OnTimelineDown(object s, MouseButtonEventArgs e)
     {
         dragging = true;
+        SeekStarted?.Invoke();
         Timeline.CaptureMouse();
         Seek(TimeAt(e), "absolute+keyframes");
     }
@@ -876,6 +907,7 @@ public partial class PlayerControls : UserControl
         dragging = false;
         Timeline.ReleaseMouseCapture();
         Seek(TimeAt(e), "absolute+exact");
+        SeekEnded?.Invoke();
         if (!overTimeline) HidePreview();
     }
 
@@ -908,6 +940,7 @@ public partial class PlayerControls : UserControl
     {
         time = t;
         Redraw();
+        Seeking?.Invoke(t, mode);
         Send(new object[] { "seek", t, mode });
     }
 

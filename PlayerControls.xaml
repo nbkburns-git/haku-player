@@ -96,10 +96,14 @@
         <TextBlock x:Name="Current" Effect="{StaticResource TextShadow}" DockPanel.Dock="Left" VerticalAlignment="Center" FontSize="15" FontWeight="SemiBold" Margin="14,0,14,0"/>
 
         <!-- timeline -->
-        <Grid x:Name="Timeline" Height="36" Background="#01000000" Cursor="Hand" VerticalAlignment="Center"
+        <Grid x:Name="Timeline" AutomationProperties.Name="Timeline" Height="36" Background="#01000000" Cursor="Hand" VerticalAlignment="Center"
               MouseMove="OnTimelineMove" MouseEnter="OnTimelineEnter" MouseLeave="OnTimelineLeave"
               MouseLeftButtonDown="OnTimelineDown" MouseLeftButtonUp="OnTimelineUp">
           <Border Height="5" CornerRadius="3" Background="#5A8A8A8A" VerticalAlignment="Center"/>
+          <!-- read ahead: how far mpv has loaded the file (blue), under the played part -->
+          <Border x:Name="CacheFill" Height="5" CornerRadius="3" Background="#B03D8BFF" HorizontalAlignment="Left" VerticalAlignment="Center" Width="0"/>
+          <!-- AI: frames already upscaled ahead of playback (green), over the blue -->
+          <Border x:Name="AiFill" Height="5" CornerRadius="3" Background="#FF3DDC84" HorizontalAlignment="Left" VerticalAlignment="Center" Width="0"/>
           <!-- chapter ticks, and the opening / ending as brighter stretches of the track (drawn in code) -->
           <Canvas x:Name="Marks" IsHitTestVisible="False"/>
           <Border x:Name="HoverFill" Height="5" CornerRadius="3" Background="#30FFFFFF" HorizontalAlignment="Left" VerticalAlignment="Center" Width="0"/>

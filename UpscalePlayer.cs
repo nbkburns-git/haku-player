@@ -19,6 +19,52 @@ public partial class MainWindow
     DateTime dropAt;
     DateTime guardFrom = DateTime.MaxValue; // inserting the filter (engine load) drops a few frames: count only after this
 
+    // ---------- the AI buffer: a short pause at the start and after a timeline seek, so the AI is running before playback ----------
+
+    bool aiHolding;        // we paused the video for the AI
+    int aiHoldId;
+    bool releaseOnRestart; // resume once mpv finishes the seek (its "playback-restart" event)
+
+    void AiHold()
+    {
+        if (!aiHolding) Send(new object[] { "set_property", "pause", true });
+        aiHolding = true;
+        int id = ++aiHoldId;
+        _ = Task.Delay(12000).ContinueWith(_ => Dispatcher.Invoke(() => { if (aiHoldId == id) AiRelease(0); })); // never stuck paused
+    }
+
+    async void AiRelease(int afterMs)
+    {
+        if (!aiHolding) return;
+        int id = ++aiHoldId;
+        if (afterMs > 0) await Task.Delay(afterMs);
+        if (!aiHolding || id != aiHoldId) return;
+        aiHolding = false;
+        if (upscaleActive) guardFrom = DateTime.UtcNow.AddSeconds(3); // the first frames after a seek may drop: don't count them
+        Send(new object[] { "set_property", "pause", false });
+    }
+
+    // From the player's timeline: pressed (pause while you pick a spot) and released (resume a second after the seek lands).
+    void TimelineSeekStart() { if (upscaleActive && controls is { Paused: false }) AiHold(); }
+    void TimelineSeekEnd() { if (aiHolding) releaseOnRestart = true; }
+
+    // Any exact seek: tell the filter where it's going, so the frames decoded on the way there skip the AI (vf_hakusr skip_until).
+    void BeforeSeek(double t, string mode)
+    {
+        if (upscaleActive) guardFrom = DateTime.UtcNow.AddSeconds(10); // until the seek lands (AiPlaybackRestart shortens it)
+        if (upscaleActive && mode.Contains("exact"))
+            Send(new object[] { "vf-command", Upscaler.Label, "skip_until", t.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) });
+    }
+
+    // mpv events: a seek finished (any seek: the first frames after it may drop, so the safety net waits); the pause changed
+    // (pressing play during the buffer wins)
+    void AiPlaybackRestart()
+    {
+        if (upscaleActive) guardFrom = DateTime.UtcNow.AddSeconds(3);
+        if (releaseOnRestart) { releaseOnRestart = false; AiRelease(1000); }
+    }
+    void AiPauseChanged(bool paused) { if (!paused) { aiHolding = false; releaseOnRestart = false; } }
+
     // A new file in the playlist: decide again.
     void ResetUpscale()
     {
@@ -26,12 +72,6 @@ public partial class MainWindow
         upscaleKey = null;
         upscaleBlocked = false;
         dropBase = -1;
-    }
-
-    int ScreenHeight()
-    {
-        try { return System.Windows.Forms.Screen.FromHandle(new WindowInteropHelper(this).Handle).Bounds.Height; } // physical pixels (per-monitor DPI aware)
-        catch { return 0; }
     }
 
     // Settings changed: apply to the video that's playing.
@@ -58,7 +98,7 @@ public partial class MainWindow
     {
         if (videoWidth <= 0 || videoHeight <= 0) return;
         string why = "dropped frames on this video, so it turned itself off";
-        var tier = upscaleBlocked ? null : Upscaler.Choose(videoWidth, videoHeight, videoFps, ScreenHeight(), out why);
+        var tier = upscaleBlocked ? null : Upscaler.Choose(videoWidth, videoHeight, videoFps, out why);
         string look = Settings.Current.UpscaleLook;
         string model = tier == null ? "" : Upscaler.ModelFile(tier, look);
         int w = videoWidth, h = videoHeight;
@@ -71,10 +111,16 @@ public partial class MainWindow
             upscaleActive = false;
             controls?.SetUpscale(0);
         }
-        if (tier == null) { controls?.SetUpscaleButton(Settings.Current.Upscale, false, $"AI upscaling: {why}"); return; }
+        if (tier == null)
+        {
+            controls?.SetUpscaleButton(Settings.Current.Upscale, false, $"AI upscaling: {why}");
+            if (w > 0 && h > 0) AiRelease(0); // not upscaling this video: no reason to wait
+            return;
+        }
 
         if (!File.Exists(Upscaler.EngineFile(model)))
         {
+            AiRelease(0); // play normally while the engine is built (seconds); the buffer comes back when it's added
             Toast($"Preparing AI upscaling ({tier.Name}): once, about 15 seconds");
             controls?.SetUpscaleButton(true, false, $"AI upscaling: preparing {tier.Name} (once, about 15 seconds)");
         }
@@ -84,10 +130,12 @@ public partial class MainWindow
         {
             Toast($"AI upscaling unavailable: {err}");
             controls?.SetUpscaleButton(true, false, $"AI upscaling unavailable: {err}");
+            AiRelease(0);
             return;
         }
 
-        Send(new object[] { "vf", "add", Upscaler.Filter(model) });
+        if (controls is { Paused: false } || aiHolding) AiHold(); // the filter loads its engine before the first upscaled frame
+        Send(new object[] { "vf", "add", Upscaler.Filter(model, videoFps) });
         upscaleActive = true;
         dropBase = -1;
         // it took once mpv's output is the model's size (the filter passes frames through when it can't upscale);
@@ -106,21 +154,41 @@ public partial class MainWindow
             controls?.SetUpscale(h * 2);
             controls?.SetUpscaleButton(true, true, $"AI upscaling on: {tier.Name}, {(look == "soft" ? "soft" : "sharp")} look, {w}×{h} → {w * 2}×{h * 2} (Ctrl+U)");
             Toast($"AI upscaling on: {tier.Name}, {(look == "soft" ? "soft" : "sharp")} look");
+            AiRelease(1000);
+            PollAiBuffer(my, key);
         }
         else
         {
             Send(new object[] { "vf", "remove", "@" + Upscaler.Label });
             upscaleActive = false;
+            AiRelease(0);
             controls?.SetUpscaleButton(true, false, "AI upscaling couldn't start for this video");
             Toast("AI upscaling couldn't start for this video");
         }
+    }
+
+    // The filter's queue of upscaled frames ready ahead of playback, for the timeline's green bar (4 times a second).
+    async void PollAiBuffer(int my, string key)
+    {
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        while (my == session && upscaleActive && upscaleKey == key)
+        {
+            string? frames = await Ask(new object[] { "get_property_string", $"vf-metadata/{Upscaler.Label}/frames" });
+            string? until = await Ask(new object[] { "get_property_string", $"vf-metadata/{Upscaler.Label}/until" });
+            string? cap = await Ask(new object[] { "get_property_string", $"vf-metadata/{Upscaler.Label}/cap" });
+            if (my != session || !upscaleActive || upscaleKey != key) break;
+            controls?.SetAiBuffer(int.TryParse(frames, out int n) ? n : 0, int.TryParse(cap, out int c) ? c : 0,
+                double.TryParse(until, System.Globalization.NumberStyles.Float, inv, out double u) ? u : -1);
+            await Task.Delay(250);
+        }
+        if (my == session) controls?.SetAiBuffer(0, 0, -1);
     }
 
     // Safety net: 12 or more dropped frames within 10 seconds means the GPU isn't keeping up.
     void CheckUpscaleDrops(long drops, int my)
     {
         var now = DateTime.UtcNow;
-        if (!upscaleActive || now < guardFrom) return;
+        if (!upscaleActive || now < guardFrom) { dropBase = -1; return; } // drops in the grace period don't count later either
         if (dropBase < 0 || (now - dropAt).TotalSeconds > 10) { dropBase = drops; dropAt = now; return; }
         if (drops - dropBase < 12) return;
         upscaleBlocked = true;

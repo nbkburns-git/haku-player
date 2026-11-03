@@ -13,8 +13,13 @@ the glass shader are drawn.
   - a sparkle button in the player bar (accent while upscaling, with a tooltip explaining what it's doing);
   - a section in the player's quick-settings menu;
   - Ctrl+U to turn it on or off.
-- Engines use a size range (one about 1 MB engine per model, any size up to 1920x1088). A fixed size made 2.4 GB engines.
-- Still to come: phase 4 (two frames in flight, CUDA graphs, FP8/INT8) and phase 5 (temporal models, HDR, DirectML).
+- Engines use a size range (one about 1 MB engine per model, any size up to 2560x1728). A fixed size made 2.4 GB engines.
+- Look-ahead (2026-11-03): vf_hakusr upscales on its own thread, up to a second of frames ahead (green on the timeline). haku_sr
+  holds the D3D11 lock only for its D3D11 calls and CUDA map/unmap, never while the model runs: holding it through the model
+  starved Haku's renderer (drops, then "Not Responding"), and calling map/unmap without it made the map fail and hung the GPU.
+  Haku refuses a haku_sr.dll older than `hsr_abi() == 2`.
+- Exact seeks: Haku sends `skip_until`, so the frames decoded on the way to the target skip the AI (2.7 s -> 0.14 s).
+- Still to come: phase 4 (CUDA graphs, D3D11/CUDA fences instead of map/unmap, FP8/INT8) and phase 5 (temporal models, HDR, DirectML).
 
 ## Why a native filter
 

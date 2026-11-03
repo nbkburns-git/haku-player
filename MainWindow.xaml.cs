@@ -1182,6 +1182,9 @@ public partial class MainWindow : Window
         controls?.SetUpscale(0);
         videoWidth = videoHeight = 0;
         ResetUpscale();
+        // AI buffer: start paused and let UpdateUpscale resume once the AI is running (or straight away if it won't upscale)
+        aiHolding = false;
+        bool aiStart = Settings.Current.Upscale && Upscaler.Installed;
         playingEntry = entry;
         autoPop = Settings.Current.AutoPopOut;
         Show(Player);
@@ -1218,7 +1221,11 @@ public partial class MainWindow : Window
             $"--glsl-shaders={GlassShader}",     // real-time liquid glass under the player bars
             "--border-background=blur",          // letterbox bars show the video, blurred, instead of black
             "--background-blur-radius=48",
-            "--watch-later-options-remove=volume,mute,speed,sub-delay", // volume is app-wide; subtitle timing is ours, per video
+            // volume is app-wide; subtitle timing is ours, per video; the AI filter and its start-up pause are Haku's to set
+            "--watch-later-options-remove=volume,mute,speed,sub-delay,vf,pause",
+            $"--pause={(aiStart ? "yes" : "no")}",
+            // read ahead (shown in blue on the timeline): a minute or two of a typical episode; seeks inside it are instant
+            "--cache=yes", "--demuxer-max-bytes=256MiB", "--demuxer-max-back-bytes=64MiB",
             $"--volume={volume.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
             $"--playlist-start={index}",
             $"--playlist={m3u}",
@@ -1228,13 +1235,14 @@ public partial class MainWindow : Window
         {
             var p = new MpvVideo(args);
             mpv = p;
+            if (aiStart) AiHold(); // mpv is already paused; this arms the hold and its time limit
             p.Exited += () => { if (mpv == p) { mpv = null; LeavePlayer(); } };
             VideoImage.Source = p.Image;
             SizeVideo();
             _ = Listen(pipe, entry, my);
             controls = new PlayerControls
             {
-                Owner = this, Send = Send, Notify = Toast, ToggleUpscale = ToggleUpscaleNow, ApplyUpscale = ApplyUpscaleSetting, Expand = Expand, Ask = Ask,ResumeAllowed = entry.Unit != "themes", Kind = entry.Kind,
+                Owner = this, Send = Send, Notify = Toast, ToggleUpscale = ToggleUpscaleNow, ApplyUpscale = ApplyUpscaleSetting, SeekStarted = TimelineSeekStart, SeekEnded = TimelineSeekEnd, Seeking = BeforeSeek, Expand = Expand, Ask = Ask,ResumeAllowed = entry.Unit != "themes", Kind = entry.Kind,
                 Back = () => OnBack(null, null),
                 Minimize = () => WindowState = WindowState.Minimized,
                 ToggleMaximize = ToggleMaximizeOrFullscreen,
@@ -1272,7 +1280,7 @@ public partial class MainWindow : Window
             var r = new StreamReader(c);
             ipc = w;
             await w.WriteLineAsync("""{"command":["observe_property",1,"fullscreen"]}""");
-            foreach (var prop in new[] { "playlist-pos", "pause", "time-pos", "duration", "volume", "mute", "video-params/aspect", "speed", "track-list", "height", "width", "container-fps", "frame-drop-count", "video-format", "sub-delay", "chapter-list" })
+            foreach (var prop in new[] { "playlist-pos", "pause", "time-pos", "duration", "volume", "mute", "video-params/aspect", "speed", "track-list", "height", "width", "container-fps", "frame-drop-count", "video-format", "sub-delay", "chapter-list", "demuxer-cache-time" })
                 await w.WriteLineAsync($$"""{"command":["observe_property",2,"{{prop}}"]}""");
             string? line;
             while ((line = await r.ReadLineAsync()) != null)
@@ -1287,6 +1295,7 @@ public partial class MainWindow : Window
                 }
                 if (!m.TryGetProperty("event", out var ev)) continue;
                 if (ev.GetString() == "file-loaded") { controls?.FileLoaded(); continue; } // re-add your subtitles + timing
+                if (ev.GetString() == "playback-restart") { AiPlaybackRestart(); continue; }
                 if (ev.GetString() != "property-change") continue;
                 m.TryGetProperty("data", out var d);
                 switch (m.GetProperty("name").GetString())
@@ -1312,6 +1321,7 @@ public partial class MainWindow : Window
                         break;
                     case "pause":
                         controls?.SetPause(d.ValueKind == JsonValueKind.True);
+                        AiPauseChanged(d.ValueKind == JsonValueKind.True);
                         DiscordUpdate();
                         break;
                     case "time-pos" when d.ValueKind == JsonValueKind.Number:
@@ -1343,6 +1353,9 @@ public partial class MainWindow : Window
                     case "width" when d.ValueKind == JsonValueKind.Number:
                         videoWidth = d.GetInt32();
                         UpdateUpscale(my);
+                        break;
+                    case "demuxer-cache-time" when d.ValueKind == JsonValueKind.Number:
+                        controls?.SetCache(d.GetDouble());
                         break;
                     case "container-fps" when d.ValueKind == JsonValueKind.Number:
                         videoFps = d.GetDouble();

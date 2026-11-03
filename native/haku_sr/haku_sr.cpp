@@ -1,4 +1,4 @@
-// haku_sr: see haku_sr.h.
+﻿// haku_sr: see haku_sr.h.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define HAKU_SR_EXPORTS
@@ -17,6 +17,7 @@
 #include <cstring>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -287,6 +288,8 @@ static bool load_engine(hsr *s, const wchar_t *path)
     return true;
 }
 
+extern "C" HSR_API int hsr_abi(void) { return HSR_ABI; }
+
 extern "C" HSR_API const char *hsr_version(void)
 {
     static char v[64];
@@ -425,7 +428,9 @@ static ID3D11UnorderedAccessView *out_uav(hsr *s, ID3D11Texture2D *t)
 extern "C" HSR_API int hsr_process(hsr *s, ID3D11Texture2D *in_tex, int in_slice, const hsr_yuv2rgb *csp,
                                    ID3D11Texture2D *out_tex)
 {
-    DeviceLock lock(s->mt);
+    // The device lock is held only around our D3D11 calls, not during the model: CUDA's map/unmap wait for the GPU, and
+    // holding the lock through them (about 25 ms) blocks Haku's renderer, which shares the device, so frames drop.
+    std::optional<DeviceLock> lock(std::in_place, s->mt);
     if (!ensure_input(s, in_tex))
         return -1;
     ID3D11UnorderedAccessView *ou = out_uav(s, out_tex);
@@ -467,12 +472,17 @@ extern "C" HSR_API int hsr_process(hsr *s, ID3D11Texture2D *in_tex, int in_slice
         size_t sz = 0;
         s->ctx->Flush();
         cudaSetDevice(s->cuda_dev);
+        // map and unmap talk to the D3D11 device, so they need the lock (without it the map can fail and the GPU hang);
+        // the model itself, and waiting for it, don't: the lock is released for that part
         if (cudaGraphicsMapResources(2, s->res, s->stream) != cudaSuccess) { set_err("map buffers for CUDA failed"); return -1; }
         bool ok = cudaGraphicsResourceGetMappedPointer(&pin, &sz, s->res[0]) == cudaSuccess &&
-                  cudaGraphicsResourceGetMappedPointer(&pout, &sz, s->res[1]) == cudaSuccess &&
-                  s->ec->setTensorAddress(s->in_name.c_str(), pin) &&
-                  s->ec->setTensorAddress(s->out_name.c_str(), pout) &&
-                  s->ec->enqueueV3(s->stream);
+                  cudaGraphicsResourceGetMappedPointer(&pout, &sz, s->res[1]) == cudaSuccess;
+        lock.reset();
+        ok = ok && s->ec->setTensorAddress(s->in_name.c_str(), pin) &&
+             s->ec->setTensorAddress(s->out_name.c_str(), pout) &&
+             s->ec->enqueueV3(s->stream) &&
+             cudaStreamSynchronize(s->stream) == cudaSuccess;
+        lock.emplace(s->mt);
         cudaGraphicsUnmapResources(2, s->res, s->stream);
         if (!ok) { set_err("TensorRT inference failed"); return -1; }
     }

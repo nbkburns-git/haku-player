@@ -12,7 +12,7 @@ namespace AnimePlayer;
 // Real-time AI upscaling: mpv's vf_hakusr filter (Haku's own libmpv build) runs AnimeJaNai models with TensorRT through
 // haku_sr.dll, keeping every frame on the GPU, before subtitles and the glass shader are drawn (docs/realtime-upscaling-plan.md).
 // Everything it needs lives in %LOCALAPPDATA%\Haku Upscaler: haku_sr.dll, the TensorRT runtime, the models, and a cache of
-// TensorRT engines (one per model, built the first time it's used, about 20 s; each takes any size up to 1920x1088).
+// TensorRT engines (one per model, built the first time it's used, about 20 s; each takes any size up to MaxW x MaxH).
 static class Upscaler
 {
     public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Haku Upscaler");
@@ -33,10 +33,31 @@ static class Upscaler
         Path.Combine(Models, $"2x_AnimeJaNai_HD_V3{(look == "soft" ? "" : "Sharp1")}_{t.Size}_fp16.onnx");
 
     // One engine per model: it takes any video up to MaxW x MaxH (haku_sr.h HSR_MAX_W/H).
-    public const int MaxW = 1920, MaxH = 1088;
-    public static string EngineFile(string model) => Path.Combine(Engines, $"{Path.GetFileNameWithoutExtension(model)}.engine");
+    public const int MaxW = 2560, MaxH = 1728;
+    // the size range is in the name, so engines built for an older, smaller range get rebuilt
+    public static string EngineFile(string model) => Path.Combine(Engines, $"{Path.GetFileNameWithoutExtension(model)}.max{MaxW}x{MaxH}.engine");
 
     public static bool Installed => File.Exists(Lib);
+
+    // The pack's haku_sr.dll is new enough for this Haku (haku_sr.h HSR_ABI): an older one holds the GPU lock while the
+    // model runs, which freezes the player now that the filter upscales on its own thread.
+    public const int Abi = 2;
+    static bool? current;
+    public static bool Current
+    {
+        get
+        {
+            if (current != null) return current.Value;
+            try
+            {
+                IntPtr lib = NativeLibrary.Load(Lib);
+                current = NativeLibrary.TryGetExport(lib, "hsr_abi", out var f) && Marshal.GetDelegateForFunctionPointer<AbiFn>(f)() >= Abi;
+            }
+            catch { current = false; }
+            return current.Value;
+        }
+    }
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate int AbiFn();
 
     // ---------- the GPU ----------
 
@@ -104,16 +125,17 @@ static class Upscaler
         Settings.Current.UpscaleMeasuredGpu == Gpu && Settings.Current.UpscaleMeasured.TryGetValue(t.Key, out var f) ? f : null;
 
     // What to use for this video, or null with the reason (for the player button's tooltip).
-    public static Tier? Choose(int w, int h, double fps, int screenHeight, out string why)
+    public static Tier? Choose(int w, int h, double fps, out string why)
     {
         var s = Settings.Current;
         why = "";
         if (!s.Upscale) { why = "turned off"; return null; }
         if (!Installed) { why = "the Haku Upscaler pack isn't installed"; return null; }
+        if (!Current) { why = "the Haku Upscaler pack needs updating (its haku_sr.dll is too old)"; return null; }
         if (Speed <= 0) { why = "needs an NVIDIA RTX graphics card"; return null; }
         if (w <= 0 || h <= 0) { why = "waiting for the video"; return null; }
-        if (screenHeight < h * 1.25) { why = "not needed: this video is already about your screen's size"; return null; }
-        if (w > MaxW || h > MaxH) { why = $"not needed: {w}×{h} is close to your screen's size"; return null; }
+        // no "already big enough" rule: upscaling on means upscale (even shown smaller, the AI's redraw is cleaner)
+        if (w > MaxW || h > MaxH) { why = $"{w}×{h} is bigger than AI upscaling takes (up to {MaxW}×{MaxH})"; return null; }
         var t = s.UpscaleTier == "auto" ? Auto(w, h, fps) : Array.Find(Tiers, x => x.Key == s.UpscaleTier) ?? Auto(w, h, fps);
         if (t == null) why = "this video is too big or fast for your graphics card to upscale in real time";
         return t;
@@ -218,6 +240,7 @@ static class Upscaler
     // mpv's "%n%" quoting: n is the length in bytes, so paths with spaces, colons and backslashes pass through untouched.
     static string Q(string s) => $"%{Encoding.UTF8.GetByteCount(s)}%{s}";
 
-    public static string Filter(string model) =>
-        $"@{Label}:hakusr=lib={Q(Lib)}:engine={Q(EngineFile(model))}";
+    // frames: upscaled frames kept ready ahead of playback (about a second; the filter caps it at vram MB)
+    public static string Filter(string model, double fps) =>
+        $"@{Label}:hakusr=lib={Q(Lib)}:engine={Q(EngineFile(model))}:frames={Math.Clamp((int)Math.Round(fps > 0 ? fps : 24), 8, 60)}:vram=1600";
 }

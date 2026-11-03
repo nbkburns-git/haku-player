@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -52,6 +52,7 @@ sealed class MpvVideo
         Set("config", "yes");                 // the user's mpv.conf, as mpv.exe would load it
         Set("input-default-bindings", "yes"); // keys we forward ("keypress") use mpv's own bindings
         Set("terminal", "no");
+        if (Trace != null) { Set("log-file", Trace + ".mpv.log"); Set("msg-level", "all=v"); }
         string? playlist = null;
         foreach (var a in args)
         {
@@ -105,8 +106,10 @@ sealed class MpvVideo
     {
         if (dead || render == IntPtr.Zero || wantW <= 0 || !Image.IsFrontBufferAvailable) return;
         bool sized = texW != wantW || texH != wantH;
+        Step("update");
         ulong upd = mpv_render_context_update(render);
-        if (!sized && (upd & 1 /* MPV_RENDER_UPDATE_FRAME */) == 0) return;
+        if (!sized && (upd & 1 /* MPV_RENDER_UPDATE_FRAME */) == 0) { Step(null); return; }
+        Step("D3DImage.Lock");
         Image.Lock();
         try
         {
@@ -119,17 +122,50 @@ sealed class MpvVideo
             {
                 // don't wait here for the frame's display time: this is the UI thread (frames come when mpv asks anyway)
                 var ps = new[] { new RenderParam(22 /* D3D11_FBO */, fbo), new RenderParam(12 /* BLOCK_FOR_TARGET_TIME */, noWait), new RenderParam(0, IntPtr.Zero) };
+                Step("mpv render");
                 mpv_render_context_render(render, ps);
             }
             finally { Marshal.FreeHGlobal(fbo); Marshal.FreeHGlobal(noWait); }
             // WPF reads the texture through Direct3D 9: the frame must be finished first
+            Step("wait for GPU");
             ctx!.End(doneQuery!);
             ctx.Flush();
             while (!ctx.IsDataAvailable(doneQuery!)) Thread.SpinWait(50);
             Image.AddDirtyRect(new Int32Rect(0, 0, texW, texH));
         }
         finally { Image.Unlock(); }
+        Step("report swap");
         mpv_render_context_report_swap(render);
+        Step(null);
+    }
+
+    // HAKU_TRACE=<file>: mpv writes a verbose log next to it, and a watchdog notes where the UI thread is stuck in Draw
+    // (for hunting freezes; off normally).
+    static readonly string? Trace = Environment.GetEnvironmentVariable("HAKU_TRACE") is { Length: > 0 } t ? t : null;
+    static volatile string? step;
+    static long stepAt;
+    static Thread? watchdog;
+    static void Step(string? s)
+    {
+        if (Trace == null) return;
+        stepAt = Environment.TickCount64;
+        step = s;
+        if (watchdog != null) return;
+        watchdog = new Thread(() =>
+        {
+            string? reported = null;
+            while (true)
+            {
+                Thread.Sleep(500);
+                var s2 = step; long ms = Environment.TickCount64 - stepAt;
+                if (s2 != null && ms > 3000 && reported != s2 + stepAt)
+                {
+                    reported = s2 + stepAt;
+                    System.IO.File.AppendAllText(Trace, $"{DateTime.Now:HH:mm:ss.fff} UI thread stuck {ms} ms in: {s2}\n");
+                }
+            }
+        }) { IsBackground = true, Name = "draw watchdog" };
+        watchdog.Start();
     }
 
     void MakeTexture()

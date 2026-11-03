@@ -1,4 +1,4 @@
-// haku_sr: Haku Player's GPU upscaler. mpv's vf_hakusr filter calls it with D3D11 decoder frames; it converts them to RGB,
+﻿// haku_sr: Haku Player's GPU upscaler. mpv's vf_hakusr filter calls it with D3D11 decoder frames; it converts them to RGB,
 // runs a TensorRT super-resolution engine (or a plain bilinear 2x, for testing the plumbing) and writes an RGBA16F frame.
 // Everything stays on the GPU: D3D11 compute shaders around TensorRT, with buffers shared through CUDA's D3D11 interop.
 #pragma once
@@ -28,6 +28,10 @@ typedef struct hsr_yuv2rgb {
 // Version string ("haku_sr 1 / TensorRT x.y.z"), for logs.
 HSR_API const char *hsr_version(void);
 
+// Bumped when Haku needs a newer haku_sr.dll. 2: safe to run on vf_hakusr's own thread (short device lock).
+#define HSR_ABI 2
+HSR_API int hsr_abi(void);
+
 // Last error on any call, for logs.
 HSR_API const char *hsr_last_error(void);
 
@@ -46,8 +50,8 @@ HSR_API int hsr_process(hsr *s, struct ID3D11Texture2D *in_tex, int in_slice, co
 HSR_API void hsr_destroy(hsr *s);
 
 // Largest input an engine takes (any size from 64x64 up to this works with one engine).
-#define HSR_MAX_W 1920
-#define HSR_MAX_H 1088
+#define HSR_MAX_W 2560
+#define HSR_MAX_H 1728
 
 // Build a TensorRT engine from an ONNX model (NCHW, RGB 0..1), tuned for in_w x in_h and taking any size up to
 // HSR_MAX_W x HSR_MAX_H, and save it to engine_path. Slow (seconds): call it from a background thread. Returns 0 on success.

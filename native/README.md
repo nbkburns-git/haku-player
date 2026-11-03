@@ -4,7 +4,7 @@ Haku Player's AI upscaling has two native pieces. Both are needed, along with th
 
 | Piece | What it is | Built with |
 |---|---|---|
-| `mpv/vf_hakusr.c` | An mpv video filter. It takes D3D11 decoder frames, calls `haku_sr.dll`, and outputs RGBA16F frames at 2x size. If anything is missing it passes frames through unchanged. | Compiled into Haku's own `libmpv-2.dll` (shinchiro's recipe plus `mpv/apply.sh`) |
+| `mpv/vf_hakusr.c` | An mpv video filter. It takes D3D11 decoder frames, calls `haku_sr.dll`, and outputs RGBA16F frames at 2x size. A worker thread upscales ahead into a queue (`frames=`, default 24, capped at `vram=` MB, default 1600); Haku reads it from `vf-metadata/hakusr/frames`, `/cap` and `/until`. `vf-command hakusr skip_until <s>` before an exact seek gives the frames mpv decodes on the way a cheap bilinear 2x instead of the AI. If anything is missing it passes frames through unchanged. | Compiled into Haku's own `libmpv-2.dll` (shinchiro's recipe plus `mpv/apply.sh`) |
 | `haku_sr/` | `haku_sr.dll`: D3D11 compute shaders around TensorRT 11, with every frame kept on the GPU. Also `hsr_test.exe`, a self-check and benchmark. | MSVC + CMake, CUDA 13.4 headers, TensorRT 11.4 headers |
 
 At runtime everything lives in `%LOCALAPPDATA%\Haku Upscaler`:
@@ -14,7 +14,7 @@ haku_sr.dll
 nvinfer_11.dll  nvonnxparser_11.dll  nvinfer_plugin_11.dll
 nvinfer_builder_resource_{ptx,sm86,sm89,sm120}_11.dll   (engine building for RTX 30/40/50)
 models\2x_AnimeJaNai_HD_V3[Sharp1]_{SuperUltraCompact,UltraCompact,Compact}_fp16.onnx
-engines\<model>.engine     (built on first use, about 15 s; one per model, any size up to 1920x1088)
+engines\<model>.max2560x1728.engine  (built on first use, about 15 s; one per model, any size up to 2560x1728)
 ```
 
 The models must be **FP16** files. TensorRT 11 is strongly typed, so an FP32 ONNX file runs in FP32, about 2.5x slower. Convert them with `onnxconverter_common.float16.convert_float_to_float16(m, keep_io_types=False)`.

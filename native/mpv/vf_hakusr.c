@@ -20,8 +20,13 @@
 // renderer draws subtitles, the OSD and shaders on top. If the DLL, the engine or the format isn't usable, frames pass
 // through untouched, so playback never breaks.
 //
-//   --vf=hakusr=lib=C\:/path/haku_sr.dll:engine=C\:/path/model.1920x1080.engine
+// A worker thread upscales ahead of playback into a queue of finished frames (frames=, capped by vram= MB), so a slow
+// frame or a busy GPU moment doesn't stall the video, and pausing or the start-up wait fills the queue. Haku reads how
+// full it is from vf-metadata/<label>/frames and /until (the last ready frame's time), for the timeline's green bar.
+//
+//   --vf=@hakusr:hakusr=lib=C\:/path/haku_sr.dll:engine=C\:/path/model.engine:frames=24:vram=1600
 //   (no engine: plain bilinear 2x, for testing the plumbing)
+//   vf-command hakusr skip_until <seconds>: a seek is heading there (see the worker)
 
 #include <windows.h>
 #include <d3d11.h>
@@ -31,12 +36,13 @@
 #include <libplacebo/colorspace.h>
 
 #include "common/common.h"
+#include "common/tags.h"
 #include "filters/filter.h"
 #include "filters/filter_internal.h"
 #include "filters/user_filters.h"
 #include "options/m_option.h"
 #include "osdep/io.h"
-#include "refqueue.h"
+#include "osdep/threads.h"
 #include "video/hwdec.h"
 #include "video/mp_image.h"
 #include "video/mp_image_pool.h"
@@ -50,14 +56,17 @@ typedef void (*hsr_output_size_fn)(hsr *, int *, int *);
 typedef int (*hsr_process_fn)(hsr *, ID3D11Texture2D *, int, const hsr_yuv2rgb *, ID3D11Texture2D *);
 typedef void (*hsr_destroy_fn)(hsr *);
 
+#define MAX_AHEAD 120
+
 struct opts {
     char *lib;
     char *engine;
+    int frames;   // upscaled frames to keep ready ahead of playback
+    int vram;     // ...but at most this many MB of them
 };
 
 struct priv {
     struct opts *opts;
-    struct mp_refqueue *queue;
     AVBufferRef *av_device_ref;
     AVBufferRef *hw_pool;
     ID3D11Device *dev;
@@ -69,18 +78,43 @@ struct priv {
     hsr_process_fn process;
     hsr_destroy_fn destroy;
 
+    // Used by the worker while it upscales; the player thread only touches these while the worker is idle and nothing
+    // is queued (reinit), or after the worker has stopped.
     hsr *sr;
+    hsr *fast;            // plain bilinear 2x for frames mpv throws away during a seek (see skip_until)
     bool usable;          // this stream can be upscaled (format, colour, sizes all fine)
     bool failed;          // gave up on this stream: pass frames through
+    struct mp_image_params in_params;   // the stream's params as they arrive (to spot format changes)
     struct mp_image_params params, out_params;
     hsr_yuv2rgb csp;
+
+    // Shared between the player thread and the worker, under lock.
+    mp_mutex lock;
+    mp_cond cond;
+    mp_thread thread;
+    bool thread_ok, quit;
+    struct mp_image *todo;              // the next decoder frame for the worker (one: decoder frames are scarce)
+    bool busy;                          // the worker is upscaling one
+    struct mp_image *done[MAX_AHEAD];   // upscaled, in order, waiting for playback
+    int num_done;
+    int cap;                            // how many to keep ahead (from frames= and vram=, once the output size is known)
+    int gen;                            // bumped by a seek: frames from before it are thrown away
+    double skip_until;                  // a seek is heading here: frames before it are only decoded to get there
+    int skipped;
+
+    // Player thread only.
+    struct mp_image *pending_fmt;       // first frame of a new format: waits until the queue has drained
+    bool have_format;
+    bool eof;                           // input ended: send EOF once everything queued is out
 };
 
 static void stop_sr(struct priv *p)
 {
     if (p->sr && p->destroy)
         p->destroy(p->sr);
-    p->sr = NULL;
+    if (p->fast && p->destroy)
+        p->destroy(p->fast);
+    p->sr = p->fast = NULL;
 }
 
 static void give_up(struct mp_filter *vf, const char *why)
@@ -117,7 +151,7 @@ static bool load_lib(struct mp_filter *vf)
     return true;
 }
 
-// New stream format: decide whether we can upscale it, and with what colour conversion.
+// New stream format: decide whether we can upscale it, and with what colour conversion. Worker idle.
 static void reinit(struct mp_filter *vf, struct mp_image *fmt)
 {
     struct priv *p = vf->priv;
@@ -125,9 +159,18 @@ static void reinit(struct mp_filter *vf, struct mp_image *fmt)
     av_buffer_unref(&p->hw_pool);
     p->failed = false;
     p->usable = false;
+    p->in_params = fmt->params;
+    p->have_format = true;
     p->params = fmt->params;
     mp_image_params_guess_csp(&p->params);
+    mp_mutex_lock(&p->lock);
+    p->cap = 2; // until the output size is known
+    mp_mutex_unlock(&p->lock);
 
+    if (fmt->imgfmt != IMGFMT_D3D11) {
+        MP_WARN(vf, "AI upscaling needs D3D11 hardware frames (got %s), passing through.\n", mp_imgfmt_to_name(fmt->imgfmt));
+        return;
+    }
     int sub = p->params.hw_subfmt;
     if (sub != IMGFMT_NV12 && sub != IMGFMT_P010) {
         MP_WARN(vf, "AI upscaling needs NV12 or P010 hardware frames (got %s), passing through.\n", mp_imgfmt_to_name(sub));
@@ -151,7 +194,7 @@ static void reinit(struct mp_filter *vf, struct mp_image *fmt)
     p->usable = true;
 }
 
-// Start the upscaler on the first frame of a stream (it needs the device and the frame size).
+// Start the upscaler on the first frame of a stream (it needs the device and the frame size). Worker thread.
 static bool start_sr(struct mp_filter *vf)
 {
     struct priv *p = vf->priv;
@@ -176,11 +219,20 @@ static bool start_sr(struct mp_filter *vf)
     p->out_params.repr = pl_color_repr_rgb;   // full-range RGB; primaries and transfer stay the video's
     p->out_params.chroma_location = PL_CHROMA_UNKNOWN;
     mp_image_params_guess_csp(&p->out_params);
-    MP_INFO(vf, "AI upscaling %dx%d -> %dx%d.\n", p->params.w, p->params.h, ow, oh);
+
+    // how many to keep ready: frames=, but no more than vram= MB of RGBA16F frames (8 bytes a pixel)
+    double frame_mb = (double)ow * oh * 8 / (1024.0 * 1024.0);
+    int cap = MPMIN(p->opts->frames, (int)(p->opts->vram / frame_mb));
+    cap = MPCLAMP(cap, 2, MAX_AHEAD);
+    mp_mutex_lock(&p->lock);
+    p->cap = cap;
+    mp_mutex_unlock(&p->lock);
+    MP_INFO(vf, "AI upscaling %dx%d -> %dx%d, up to %d frames ahead (%.0f MB).\n", p->params.w, p->params.h, ow, oh,
+            cap, cap * frame_mb);
     return true;
 }
 
-// Output frames: single RGBA16F textures the upscaler can write with a compute shader.
+// Output frames: single RGBA16F textures the upscaler can write with a compute shader. Worker thread.
 static struct mp_image *alloc_out(struct mp_filter *vf)
 {
     struct priv *p = vf->priv;
@@ -210,7 +262,8 @@ static struct mp_image *alloc_out(struct mp_filter *vf)
     return img;
 }
 
-static struct mp_image *render(struct mp_filter *vf, struct mp_image *in)
+// One frame through the AI (or the cheap bilinear 2x when fast). NULL: pass it through. Worker thread.
+static struct mp_image *render(struct mp_filter *vf, struct mp_image *in, bool fast)
 {
     struct priv *p = vf->priv;
     if (!p->sr && !start_sr(vf))
@@ -222,7 +275,14 @@ static struct mp_image *render(struct mp_filter *vf, struct mp_image *in)
     }
     mp_image_copy_attributes(out, in);
     out->params = p->out_params;
-    if (p->process(p->sr, (ID3D11Texture2D *)in->planes[0], (int)(intptr_t)in->planes[1], &p->csp,
+    hsr *use = p->sr;
+    if (fast) {
+        if (!p->fast)
+            p->fast = p->create(p->dev, NULL, p->params.w, p->params.h);
+        if (p->fast)
+            use = p->fast;
+    }
+    if (p->process(use, (ID3D11Texture2D *)in->planes[0], (int)(intptr_t)in->planes[1], &p->csp,
                    (ID3D11Texture2D *)out->planes[0]) < 0)
     {
         talloc_free(out);
@@ -232,52 +292,201 @@ static struct mp_image *render(struct mp_filter *vf, struct mp_image *in)
     return out;
 }
 
+static MP_THREAD_VOID worker(void *arg)
+{
+    struct mp_filter *vf = arg;
+    struct priv *p = vf->priv;
+    mp_thread_set_name("hakusr");
+    mp_mutex_lock(&p->lock);
+    while (!p->quit) {
+        if (!p->todo) {
+            mp_cond_wait(&p->cond, &p->lock);
+            continue;
+        }
+        struct mp_image *in = p->todo;
+        p->todo = NULL;
+        p->busy = true;
+        int gen = p->gen;
+        // during an exact seek mpv decodes from the keyframe and drops the frames before the target after the filters:
+        // those get the cheap bilinear 2x (same size and format). 1000: a limit in case the target is never reached.
+        bool fast = false;
+        if (p->skip_until != MP_NOPTS_VALUE) {
+            if (in->pts != MP_NOPTS_VALUE && in->pts < p->skip_until - 0.002 && p->skipped < 1000) {
+                fast = true;
+                p->skipped++;
+            } else {
+                MP_VERBOSE(vf, "Seek reached: %d frames skipped the AI.\n", p->skipped);
+                p->skip_until = MP_NOPTS_VALUE;
+            }
+        }
+        mp_mutex_unlock(&p->lock);
+
+        struct mp_image *out = NULL;
+        if (p->usable && !p->failed && p->lib)
+            out = render(vf, in, fast);
+        if (!out)
+            out = mp_image_new_ref(in); // pass through
+        talloc_free(in);
+
+        mp_mutex_lock(&p->lock);
+        p->busy = false;
+        if (out && gen == p->gen && p->num_done < MAX_AHEAD)
+            p->done[p->num_done++] = out;
+        else
+            talloc_free(out); // a seek happened meanwhile
+        mp_cond_broadcast(&p->cond);
+        mp_mutex_unlock(&p->lock);
+        mp_filter_wakeup(vf);
+        mp_mutex_lock(&p->lock);
+    }
+    mp_mutex_unlock(&p->lock);
+    MP_THREAD_RETURN();
+}
+
 static void vf_hakusr_process(struct mp_filter *vf)
 {
     struct priv *p = vf->priv;
+    struct mp_pin *in = vf->ppins[0], *out = vf->ppins[1];
 
-    struct mp_image *in_fmt = mp_refqueue_execute_reinit(p->queue);
-    if (in_fmt)
-        reinit(vf, in_fmt);
+    // 1. hand playback the next finished frame
+    if (mp_pin_in_needs_data(out)) {
+        struct mp_image *img = NULL;
+        mp_mutex_lock(&p->lock);
+        bool idle = !p->todo && !p->busy;
+        if (p->num_done) {
+            img = p->done[0];
+            memmove(&p->done[0], &p->done[1], (p->num_done - 1) * sizeof(p->done[0]));
+            p->num_done--;
+        }
+        mp_mutex_unlock(&p->lock);
+        if (img) {
+            mp_pin_in_write(out, MAKE_FRAME(MP_FRAME_VIDEO, img));
+            mp_filter_internal_mark_progress(vf);
+        } else if (p->eof && idle && !p->pending_fmt) {
+            p->eof = false;
+            mp_pin_in_write(out, MP_EOF_FRAME);
+        }
+    }
 
-    if (!mp_refqueue_can_output(p->queue))
-        return;
+    mp_mutex_lock(&p->lock);
+    int queued = p->num_done + !!p->todo + p->busy;
+    // passing through holds the decoder's own frames, which it needs back: don't run ahead then
+    int cap = p->usable && !p->failed && p->lib ? p->cap : 1;
+    bool room = !p->todo && queued < cap;
+    mp_mutex_unlock(&p->lock);
 
-    struct mp_image *in = mp_refqueue_get(p->queue, 0);
-    struct mp_image *out = NULL;
-    if (p->usable && !p->failed && p->lib)
-        out = render(vf, in);
-    if (!out)
-        out = mp_image_new_ref(in); // pass through
-    if (!out) {
-        mp_filter_internal_mark_failed(vf);
+    // 2. a new format starts once everything of the old one is out
+    if (p->pending_fmt && queued == 0) {
+        struct mp_image *img = p->pending_fmt;
+        p->pending_fmt = NULL;
+        reinit(vf, img);
+        mp_mutex_lock(&p->lock);
+        p->todo = img;
+        mp_cond_signal(&p->cond);
+        mp_mutex_unlock(&p->lock);
+        mp_filter_internal_mark_progress(vf);
         return;
     }
-    mp_refqueue_write_out_pin(p->queue, out);
+
+    // 3. take the next decoded frame while there's room ahead
+    if (p->eof || p->pending_fmt || !room || !mp_pin_out_request_data(in))
+        return;
+    struct mp_frame frame = mp_pin_out_read(in);
+    if (frame.type == MP_FRAME_EOF) {
+        p->eof = true;
+        mp_filter_internal_mark_progress(vf);
+    } else if (frame.type == MP_FRAME_VIDEO) {
+        struct mp_image *img = frame.data;
+        if (!p->have_format || !mp_image_params_equal(&img->params, &p->in_params)) {
+            p->pending_fmt = img;
+        } else {
+            mp_mutex_lock(&p->lock);
+            p->todo = img;
+            mp_cond_signal(&p->cond);
+            mp_mutex_unlock(&p->lock);
+        }
+        mp_filter_internal_mark_progress(vf);
+    } else {
+        MP_ERR(vf, "unexpected frame type\n");
+        mp_frame_unref(&frame);
+        mp_filter_internal_mark_failed(vf);
+    }
 }
 
+// Seek or stop: throw away everything queued and wait for the frame being upscaled.
 static void flush_frames(struct mp_filter *vf)
 {
     struct priv *p = vf->priv;
-    mp_refqueue_flush(p->queue);
+    mp_mutex_lock(&p->lock);
+    p->gen++;
+    talloc_free(p->todo);
+    p->todo = NULL;
+    for (int n = 0; n < p->num_done; n++)
+        talloc_free(p->done[n]);
+    p->num_done = 0;
+    while (p->busy)
+        mp_cond_wait(&p->cond, &p->lock);
+    mp_mutex_unlock(&p->lock);
+    talloc_free(p->pending_fmt);
+    p->pending_fmt = NULL;
+    p->eof = false;
+}
+
+// "vf-command hakusr skip_until <seconds>", sent by Haku right before a seek; and vf-metadata/hakusr for the queue.
+static bool command(struct mp_filter *vf, struct mp_filter_command *cmd)
+{
+    struct priv *p = vf->priv;
+    if (cmd->type == MP_FILTER_COMMAND_GET_META) {
+        struct mp_tags *t = talloc_zero(NULL, struct mp_tags);
+        mp_mutex_lock(&p->lock);
+        int n = p->num_done;
+        double until = n ? p->done[n - 1]->pts : MP_NOPTS_VALUE;
+        int cap = p->cap;
+        mp_mutex_unlock(&p->lock);
+        mp_tags_set_str(t, "frames", mp_tprintf(20, "%d", n));
+        mp_tags_set_str(t, "cap", mp_tprintf(20, "%d", cap));
+        mp_tags_set_str(t, "until", until == MP_NOPTS_VALUE ? "" : mp_tprintf(40, "%.3f", until));
+        *(struct mp_tags **)cmd->res = t;
+        return true;
+    }
+    if (cmd->type != MP_FILTER_COMMAND_TEXT || !cmd->cmd || strcmp(cmd->cmd, "skip_until") != 0 || !cmd->arg)
+        return false;
+    char *end;
+    double t = strtod(cmd->arg, &end);
+    if (end == cmd->arg)
+        return false;
+    mp_mutex_lock(&p->lock);
+    p->skip_until = t;
+    p->skipped = 0;
+    mp_mutex_unlock(&p->lock);
+    return true;
 }
 
 static void uninit(struct mp_filter *vf)
 {
     struct priv *p = vf->priv;
-    stop_sr(p);
+    if (p->thread_ok) {
+        mp_mutex_lock(&p->lock);
+        p->quit = true;
+        mp_cond_broadcast(&p->cond);
+        mp_mutex_unlock(&p->lock);
+        mp_thread_join(p->thread);
+    }
     flush_frames(vf);
-    talloc_free(p->queue);
+    stop_sr(p);
     av_buffer_unref(&p->hw_pool);
     av_buffer_unref(&p->av_device_ref);
     if (p->dev)
         ID3D11Device_Release(p->dev);
+    mp_cond_destroy(&p->cond);
+    mp_mutex_destroy(&p->lock);
     // the DLL stays loaded: TensorRT's runtime doesn't like being unloaded and reloaded in one process
 }
 
 static const struct mp_filter_info vf_hakusr_filter = {
     .name = "hakusr",
     .process = vf_hakusr_process,
+    .command = command,
     .reset = flush_frames,
     .destroy = uninit,
     .priv_size = sizeof(struct priv),
@@ -295,7 +504,10 @@ static struct mp_filter *vf_hakusr_create(struct mp_filter *parent, void *option
 
     struct priv *p = f->priv;
     p->opts = talloc_steal(p, options);
-    p->queue = mp_refqueue_alloc(f);
+    p->skip_until = MP_NOPTS_VALUE;
+    p->cap = 2;
+    mp_mutex_init(&p->lock);
+    mp_cond_init(&p->cond);
 
     struct mp_stream_info *info = mp_filter_find_stream_info(f);
     if (!info || !info->hwdec_devs)
@@ -316,13 +528,15 @@ static struct mp_filter *vf_hakusr_create(struct mp_filter *parent, void *option
     if (!load_lib(f))
         p->failed = true; // still a working (pass-through) filter
 
-    mp_refqueue_add_in_format(p->queue, IMGFMT_D3D11, 0);
-    mp_refqueue_set_refs(p->queue, 0, 0);
-    mp_refqueue_set_mode(p->queue, 0);
+    if (mp_thread_create(&p->thread, worker, f)) {
+        MP_ERR(f, "couldn't start the upscaling thread\n");
+        goto fail;
+    }
+    p->thread_ok = true;
     return f;
 
 fail:
-    talloc_free(f);
+    talloc_free(f); // runs uninit
     return NULL;
 }
 
@@ -330,6 +544,8 @@ fail:
 static const m_option_t vf_opts_fields[] = {
     {"lib", OPT_STRING(lib)},
     {"engine", OPT_STRING(engine)},
+    {"frames", OPT_INT(frames), M_RANGE(1, MAX_AHEAD)},
+    {"vram", OPT_INT(vram), M_RANGE(64, 16384)},
     {0}
 };
 
@@ -339,6 +555,10 @@ const struct mp_user_filter_entry vf_hakusr = {
         .name = "hakusr",
         .priv_size = sizeof(OPT_BASE_STRUCT),
         .options = vf_opts_fields,
+        .priv_defaults = &(const OPT_BASE_STRUCT){
+            .frames = 24,
+            .vram = 1600,
+        },
     },
     .create = vf_hakusr_create,
 };
