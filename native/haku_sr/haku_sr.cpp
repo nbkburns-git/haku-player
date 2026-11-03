@@ -101,7 +101,15 @@ std::wstring module_dir()
 bool load_trt(bool need_builder)
 {
     std::call_once(g_trt_once, [] {
+        // the TensorRT runtime: next to this DLL (hsr_test, the pack's own copy), else in the Haku Upscaler pack, since
+        // Haku ships haku_sr.dll next to HakuPlayer.exe
         std::wstring dir = module_dir();
+        if (GetFileAttributesW((dir + L"nvinfer_11.dll").c_str()) == INVALID_FILE_ATTRIBUTES) {
+            wchar_t local[MAX_PATH];
+            DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", local, MAX_PATH);
+            if (n > 0 && n < MAX_PATH)
+                dir = std::wstring(local, n) + L"\\Haku Upscaler\\";
+        }
         // nvinfer finds its builder resources and cudart next to itself
         SetDllDirectoryW(dir.c_str());
         HMODULE infer = LoadLibraryExW((dir + L"nvinfer_11.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);

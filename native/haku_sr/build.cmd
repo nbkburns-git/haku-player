@@ -9,6 +9,8 @@ cmake -S "%HERE%." -B "%HERE%build" -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Rele
 cmake --build "%HERE%build" >>"%HERE%build.log" 2>&1 || (type "%HERE%build.log" & exit /b 1)
 if not exist "%HERE%out" mkdir "%HERE%out"
 copy /y "%HERE%build\haku_sr.dll" "%HERE%out\" >nul
+rem Haku ships it next to HakuPlayer.exe (AnimePlayer.csproj copies lib\haku_sr.dll)
+copy /y "%HERE%build\haku_sr.dll" "%HERE%..\..\lib\" >nul
 copy /y "%HERE%build\hsr_test.exe" "%HERE%out\" >nul
 for %%f in (nvinfer_11.dll nvonnxparser_11.dll nvinfer_builder_resource_sm89_11.dll nvinfer_builder_resource_ptx_11.dll) do (
   if not exist "%HERE%out\%%f" copy /y "%HERE%..\..\deps\tensorrt\bin\%%f" "%HERE%out\" >nul

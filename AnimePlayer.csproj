@@ -22,6 +22,9 @@
     <None Include="Assets\glass.glsl" CopyToOutputDirectory="PreserveNewest" />
     <!-- mpv as a library (shinchiro build 20261021, git e471496c56): it draws the video into our own window -->
     <None Include="lib\libmpv-2.dll" Link="libmpv-2.dll" CopyToOutputDirectory="PreserveNewest" />
+    <!-- the AI upscaler's own code (native\haku_sr, built by its build.cmd into lib\): travels with the app, so it always
+         matches it; the big TensorRT runtime and the models stay in %LOCALAPPDATA%\Haku Upscaler -->
+    <None Include="lib\haku_sr.dll" Link="haku_sr.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('lib\haku_sr.dll')" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />

@@ -171,27 +171,86 @@ static class InfoService
         return res.IsSuccessStatusCode ? JsonNode.Parse(await res.Content.ReadAsStringAsync()) : null;
     }
 
+    // ---------- names to search for ----------
+
+    // Folders like "Naruto Complete", "Monster 2004 1080p" or "Neon Genesis Evangelion Complete Series" find nothing as they
+    // are, so the search tries, in order: the folder name cleaned up (no quality, year, "Complete"...), the series name the
+    // episode files carry ("[CBM]_Monster_-_01_-_Herr_Dr._Tenma_[5CBB3C92].mkv" -> "Monster"), then the raw folder name.
+    static List<string> SearchNames(string folder, string name, out int? year)
+    {
+        var clean = MainWindow.CleanTitle(name);
+        year = clean.Year;
+        var names = new List<string> { StripNoise(clean.Title) };
+        if (SeriesFromFiles(folder) is { } fromFiles)
+        {
+            names.Add(fromFiles.Title);
+            year ??= fromFiles.Year;
+        }
+        names.Add(name);
+        return names.Select(n => Regex.Replace(n, @"\s+", " ").Trim(' ', '-', ',')).Where(n => n.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    // Leftover release words CleanTitle doesn't cut at ("... Complete Series", "... Dual Audio").
+    static string StripNoise(string s) =>
+        Regex.Replace(s, @"\b(complete( series| collection)?|the complete series|collection|batch|dual[ -]?audio|dubbed|subbed|eng ?(dub|sub)|uncensored|remastered|bd|dvd|tv series|anime)\b", " ", RegexOptions.IgnoreCase);
+
+    // The series name in an episode's file name, or null for a name that doesn't look like an episode.
+    internal static (string Title, int? Year)? SeriesFromFile(string file)
+    {
+        var n = Path.GetFileName(file).Replace('_', ' '); // "[CBM]_Monster_-_01_-_..." -> "[CBM] Monster - 01 - ..."
+        var title = Regex.Replace(StripNoise(Regex.Replace(MainWindow.ShowGuess(n), @"\([^)]*\)", " ")), @"\s+", " ").Trim(' ', '-');
+        return title.Length > 1 ? (title, MainWindow.CleanTitle(Path.GetFileNameWithoutExtension(n)).Year) : null;
+    }
+
+    // The name most episode files agree on (at least half of a sample of them).
+    static (string Title, int? Year)? SeriesFromFiles(string folder)
+    {
+        var found = EpisodeFiles(folder).Take(40).Select(SeriesFromFile).Where(x => x != null).Select(x => x!.Value).ToList();
+        if (found.Count == 0) return null;
+        var top = found.GroupBy(x => Norm(x.Title)).OrderByDescending(g => g.Count()).First();
+        return top.Count() * 2 >= found.Count ? (top.First().Title, top.Select(x => x.Year).FirstOrDefault(y => y != null)) : null;
+    }
+
+    // A show's episodes: videos in the folder itself or a "Season N" folder, not "Movies", "NC" (creditless OP/ED),
+    // "Extras" and the like, and not opening/ending files.
+    static IEnumerable<string> EpisodeFiles(string folder)
+    {
+        IEnumerable<string> dirs;
+        try { dirs = Directory.EnumerateDirectories(folder).Where(d => Regex.IsMatch(Path.GetFileName(d), @"^(Season|S)\s*\d+|^Series\s*\d+", RegexOptions.IgnoreCase)).Prepend(folder).ToList(); }
+        catch { yield break; }
+        foreach (var d in dirs)
+        {
+            IEnumerable<string> files;
+            try { files = Directory.EnumerateFiles(d).ToList(); } catch { continue; }
+            foreach (var f in files)
+                if (VideoExt.Contains(Path.GetExtension(f).ToLowerInvariant()) && !Regex.IsMatch(Path.GetFileName(f), @"-(OP|ED)\d|\b(NC)?(OP|ED)\d*\b.*creditless|\bsample\b", RegexOptions.IgnoreCase))
+                    yield return f;
+        }
+    }
+
     // Pick from AniList's search results. Exact title matches win, but a mere nickname match on an obscure
     // entry (e.g. "Demon Slayer" is also a synonym of the 2016 short "Onigiri") loses to the hugely popular series.
     static async Task<JsonNode?> Search(string folder, string name)
     {
         int files = 0;
-        try
-        {
-            files = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
-                .Count(f => VideoExt.Contains(Path.GetExtension(f).ToLowerInvariant()) && !Regex.IsMatch(Path.GetFileName(f), @"-(OP|ED)\d", RegexOptions.IgnoreCase)); // episodes, not themes
-        }
-        catch { }
-        // try the folder name, then friendlier spellings: "SteinsGate" -> "Steins Gate", "Haikyuu S2" -> "Haikyuu Season 2"
-        var spaced = Regex.Replace(name, @"(?<=[a-z])(?=[A-Z])", " ");
-        var tries = new[] { name, spaced, Regex.Replace(spaced, @"\bS(\d+)\b", "Season $1"), Regex.Replace(spaced, @"\s*\bS\d+\b", "") }
-            .Select(t => t.Trim()).Where(t => t.Length > 0).Distinct().ToList();
+        try { files = EpisodeFiles(folder).Count(); } catch { }
         int season = Regex.Match(name, @"\bS(\d+)\b") is { Success: true } sm ? int.Parse(sm.Groups[1].Value) : 0;
+        // each name, then friendlier spellings of it: "SteinsGate" -> "Steins Gate", "Haikyuu S2" -> "Haikyuu Season 2"
+        var tries = new List<string>();
+        foreach (var n in SearchNames(folder, name, out var year))
+        {
+            var spaced = Regex.Replace(n, @"(?<=[a-z])(?=[A-Z])", " ");
+            tries.AddRange(new[] { n, spaced, Regex.Replace(spaced, @"\bS(\d+)\b", "Season $1"), Regex.Replace(spaced, @"\s*\bS\d+\b", "") });
+        }
+        tries = tries.Select(t => t.Trim()).Where(t => t.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Take(8).ToList();
+        int? yearHint = MainWindow.CleanTitle(name).Year ?? SeriesFromFiles(folder)?.Year;
+
         foreach (var q in tries)
         {
             var page = await Query($"query($s:String){{Page(perPage:8){{media(search:$s,type:ANIME,sort:SEARCH_MATCH){{{Fields}}}}}}}", new JsonObject { ["s"] = q });
             var list = page?["Page"]?["media"]?.AsArray();
-            if (list == null || list.Count == 0) continue;
+            if (list == null || list.Count == 0) continue; // nothing for this spelling: try the next
             string want = Norm(Regex.Replace(q, @"\bSeason \d+\b", ""));
             return list.Select((m, idx) => (m, idx)).OrderByDescending(t =>
             {
@@ -204,6 +263,8 @@ static class InfoService
                 score += 15 * Math.Log10(1 + (m["popularity"]?.GetValue<int>() ?? 0)); // ~90 for a hit series, ~45 for an obscure one
                 // a show folder with N episodes should match an entry with at least about N episodes
                 if (files > 3 && m["episodes"]?.GetValue<int?>() is int eps) score += eps + 2 >= files ? 10 : -15;
+                // a year in the folder or file names ("Monster 2004", "Hunter x Hunter (2011)") picks that version
+                if (yearHint != null && m["startDate"]?["year"]?.GetValue<int?>() is int y) score += Math.Abs(y - yearHint.Value) <= 1 ? 40 : -20;
                 if (season > 1)
                 {
                     var all = string.Join(" ", new[] { m["title"]?["english"], m["title"]?["romaji"] }.Select(x => x?.GetValue<string>() ?? ""));
@@ -259,11 +320,21 @@ static class InfoService
         string type = e.Kind == "movie" ? "movie" : "series";
         if (!Settings.Current.MediaOverrides.TryGetValue(e.Folder, out var id))
         {
-            var res = await GetJson($"{Cinemeta}/catalog/{type}/top/search={Uri.EscapeDataString(e.Name)}.json");
-            var metas = res?["metas"]?.AsArray().Where(m => m != null).ToList();
+            // the folder's name, else (for a badly named folder) the series name its episode files carry
+            List<JsonNode>? metas = null;
+            string query = e.Name;
+            int? fileYear = null;
+            var names = new List<string> { e.Name };
+            if (e.Kind == "tv" && Directory.Exists(e.Folder) && SeriesFromFiles(e.Folder) is { } ff) { names.Add(ff.Title); fileYear = ff.Year; }
+            foreach (var n in names.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                var res = await GetJson($"{Cinemeta}/catalog/{type}/top/search={Uri.EscapeDataString(n)}.json");
+                metas = res?["metas"]?.AsArray().Where(m => m != null).Select(m => m!).ToList();
+                if (metas is { Count: > 0 }) { query = n; break; }
+            }
             if (metas == null || metas.Count == 0) return null;
-            int? year = yearHint ?? MainWindow.CleanTitle(Path.GetFileName(e.Folder)).Year;
-            string want = Norm(e.Name);
+            int? year = yearHint ?? MainWindow.CleanTitle(Path.GetFileName(e.Folder)).Year ?? fileYear;
+            string want = Norm(query);
             id = Str(metas.Select((m, i) => (m: m!, i)).OrderByDescending(t =>
             {
                 string n = Norm(Str(t.m["name"]) ?? "");

@@ -16,7 +16,8 @@ namespace AnimePlayer;
 static class Upscaler
 {
     public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Haku Upscaler");
-    public static string Lib => Path.Combine(Dir, "haku_sr.dll");
+    // Haku's own copy next to the exe (always matches this build), else an older pack's copy
+    public static string Lib => File.Exists(Path.Combine(AppContext.BaseDirectory, "haku_sr.dll")) ? Path.Combine(AppContext.BaseDirectory, "haku_sr.dll") : Path.Combine(Dir, "haku_sr.dll");
     static string Models => Path.Combine(Dir, "models");
     static string Engines => Path.Combine(Dir, "engines");
 
@@ -37,7 +38,8 @@ static class Upscaler
     // the size range is in the name, so engines built for an older, smaller range get rebuilt
     public static string EngineFile(string model) => Path.Combine(Engines, $"{Path.GetFileNameWithoutExtension(model)}.max{MaxW}x{MaxH}.engine");
 
-    public static bool Installed => File.Exists(Lib);
+    // the pack: the TensorRT runtime and the models (haku_sr.dll itself comes with Haku)
+    public static bool Installed => File.Exists(Lib) && File.Exists(Path.Combine(Dir, "nvinfer_11.dll"));
 
     // The pack's haku_sr.dll is new enough for this Haku (haku_sr.h HSR_ABI): an older one holds the GPU lock while the
     // model runs, which freezes the player now that the filter upscales on its own thread.

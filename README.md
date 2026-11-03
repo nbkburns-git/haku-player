@@ -24,6 +24,7 @@ built right into the window, with live frosted-glass controls floating over the 
 - **Skip opening, skip ending, Up next.** Timings come from the file's chapters or from [AniSkip](https://aniskip.com) and [TheIntroDB](https://theintrodb.org). Failing that, Haku Player finds them itself by comparing the music of two episodes.
 - **Remembers what you've watched.** Watched ticks, progress bars, a *Continue watching* row and library stats.
 - **Your files, untouched.** It plays the originals at full quality through mpv (GPU decoding, no re-encoding) and never renames anything.
+- **Real-time AI upscaling** (NVIDIA RTX). Anime is redrawn at twice the size with [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) models on TensorRT, live, all on the GPU, a second ahead of playback. Subtitles and controls are drawn after, so they stay sharp.
 - **Drop to play.** Drag a video or a folder onto the window, or onto `HakuPlayer.exe`, and it plays straight away. With the app already open, it plays in that window.
 
 ## Tour
@@ -85,7 +86,7 @@ The controls float over the video in two glass pills. They blur, brighten and be
 - Several library folders, each marked as anime, TV shows or movies. New files are picked up while the app is open.
 - Anime: `Anime Shows` and `Anime Openings` folders. TV: one folder per show *or per season*; seasons of the same show are merged ("Rick.and.Morty.S01…", "Rick and Morty Season 9").
 - Details from [AniList](https://anilist.co) for anime and [Cinemeta](https://v3-cinemeta.strem.io) (IMDb) for TV and movies: description, genres, year, studio or director, score, banner and cover.
-- Accurate matching: openings named the AnimeThemes way identify their show exactly; otherwise a ranked search (title, popularity, format, episode count). *Wrong show info?* lets you pick the right one.
+- Accurate matching: openings named the AnimeThemes way identify their show exactly; otherwise a ranked search (title, year, popularity, format, episode count). Badly named folders still match: it also tries the name cleaned up ("Naruto Complete", "Monster 2004 1080p") and the series name in the episode files ("[CBM]_Monster_-_01_….mkv"). *Wrong show info?* lets you pick the right one.
 - Missing covers are downloaded. Anime covers are saved as `cover.jpg` in the show folder; TV and movie covers go in the app's own data folder.
 - Official episode names (shown in the app only), a season picker, and *What's missing* (episodes you don't have yet).
 - Search across shows, alternative titles and episodes. Favourites, genre and kind filters, sorted A–Z, by newest or by top rated.
@@ -102,6 +103,7 @@ The controls float over the video in two glass pills. They blur, brighten and be
 - Speed, volume (wheel works anywhere), fill-to-screen for near-16:9 screens, fullscreen, and a pop-out player that stays on top.
 - The window keeps the video's shape when you resize it. Keyboard shortcuts are mpv's (space, arrows, `f`, `m`, `j`, `z`/`x`…).
 - Debug panel: codec, colour, decoder, frame rate, dropped frames, A/V sync and bitrate.
+- AI upscaling: a sparkle button (green while it runs) and `Ctrl+U`, its own settings page with Auto / Fast / Balanced / Quality tiers and a sharp or soft look, and *Detect best for this PC*, which times each tier on your card. The badge shows what it's upscaling to (`1080p → 4K`); the timeline shows the read-ahead in blue and the frames already upscaled in green. It waits a second before playing, and after a seek, so the AI is running first; if frames start dropping, it turns itself off for that video.
 </details>
 
 <details>
@@ -122,6 +124,7 @@ The controls float over the video in two glass pills. They blur, brighten and be
 | **libmpv** | To build: put `libmpv-2.dll` in `lib\` (see below). It's copied next to the exe, so nothing else to install |
 | **FFmpeg** | `winget install Gyan.FFmpeg` (`ffmpeg` / `ffprobe` on `PATH`), for previews, opening/ending detection and stats |
 | **GPU** | Any. NVIDIA cards decode timeline previews with CUDA; others fall back to the CPU |
+| **AI upscaling** (optional) | An NVIDIA RTX card, Haku's own `libmpv-2.dll` (with its `vf_hakusr` filter) and the TensorRT runtime and models in `%LOCALAPPDATA%\Haku Upscaler`. How to build all three: [native/README.md](native/README.md). Without them the option just stays off |
 
 ## Getting started
 
@@ -181,6 +184,7 @@ turn it on, talks to the Discord app on your own PC.
 
 - [mpv](https://mpv.io) and [libplacebo](https://code.videolan.org/videolan/libplacebo) for playback and the shader hook; [FFmpeg](https://ffmpeg.org) and Chromaprint for previews and fingerprints.
 - [AniList](https://anilist.co), [AnimeThemes](https://animethemes.moe), [Cinemeta](https://v3-cinemeta.strem.io), [AniSkip](https://aniskip.com), [TheIntroDB](https://theintrodb.org) and [IntroDB](https://introdb.app) for their free APIs.
+- AI upscaling: [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) models by the-database (CC BY-NC-SA 4.0, not included), run with [NVIDIA TensorRT](https://developer.nvidia.com/tensorrt).
 - [Outfit](https://github.com/Outfitio/Outfit-Fonts) by The Outfit Project Authors, under the [SIL Open Font License](Assets/Fonts/OFL-Outfit.txt).
 - Artwork in the screenshots belongs to its owners. The videos shown are the author's own 4K upscales.
 
