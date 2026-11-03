@@ -94,6 +94,8 @@ public partial class MainWindow : Window
             if (TestWindow is { } r) SetWindowPos(Hwnd, IntPtr.Zero, r.X, r.Y, r.W, r.H, 0x0014 /* NOZORDER | NOACTIVATE */);
         };
         if (TestWindow != null) ShowActivated = false; // a test run: never take focus (you may be in a game)
+        // again once shown: on a scaled monitor WPF applies its own size after SourceInitialized (2400 wide became 3600 at 150%)
+        ContentRendered += (_, _) => { if (TestWindow is { } r) SetWindowPos(Hwnd, IntPtr.Zero, r.X, r.Y, r.W, r.H, 0x0014); };
         StateChanged += (_, _) => { FitMaximized(); UpdateBlobs(); };
         Activated += (_, _) => UpdateBlobs();
         Deactivated += (_, _) => UpdateBlobs();

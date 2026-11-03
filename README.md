@@ -7,9 +7,10 @@
 **A liquid-glass media player for Windows, built for 4K anime.**
 
 Browse your anime, TV shows and movies like a streaming service, then watch them in mpv,
-built right into the window, with live frosted-glass controls floating over the picture.
+built right into the window, with live frosted-glass controls floating over the picture,
+and real-time AI upscaling to 4K on NVIDIA RTX cards.
 
-[![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)](#requirements) [![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/9.0) [![WPF](https://img.shields.io/badge/UI-WPF-68217A)](#how-it-works) [![mpv](https://img.shields.io/badge/player-mpv-691F69)](https://mpv.io) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+[![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)](#requirements) [![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/9.0) [![WPF](https://img.shields.io/badge/UI-WPF-68217A)](#how-it-works) [![mpv](https://img.shields.io/badge/player-mpv-691F69)](https://mpv.io) [![AI upscaling](https://img.shields.io/badge/AI-TensorRT-76B900?logo=nvidia&logoColor=white)](#ai-upscaling) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
 <img src="docs/images/home.png" alt="Haku Player home screen" width="100%"/>
 
@@ -19,12 +20,12 @@ built right into the window, with live frosted-glass controls floating over the 
 
 ## Highlights
 
+- **Real-time AI upscaling** (NVIDIA RTX). Anime and cartoons are redrawn at twice the size with [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) models on TensorRT, live and all on the GPU, a second ahead of playback. Live-action TV shows and movies use NVIDIA's RTX Video Super Resolution instead. Subtitles and controls are drawn afterwards, so they stay sharp.
 - **Liquid glass everywhere.** The window uses Windows 11's acrylic, with slowly drifting colour glows behind it. In the player, a GPU shader blurs the *live video* under the controls every frame, Apple-style.
 - **Made for anime.** Japanese audio and full English subtitles by default (it skips "Signs & Songs" tracks). Official episode titles, and openings and endings as their own library, named the [AnimeThemes](https://animethemes.moe) way.
 - **Skip opening, skip ending, Up next.** Timings come from the file's chapters or from [AniSkip](https://aniskip.com) and [TheIntroDB](https://theintrodb.org). Failing that, Haku Player finds them itself by comparing the music of two episodes.
 - **Remembers what you've watched.** Watched ticks, progress bars, a *Continue watching* row and library stats.
 - **Your files, untouched.** It plays the originals at full quality through mpv (GPU decoding, no re-encoding) and never renames anything.
-- **Real-time AI upscaling** (NVIDIA RTX). Anime is redrawn at twice the size with [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) models on TensorRT, live, all on the GPU, a second ahead of playback. Subtitles and controls are drawn after, so they stay sharp.
 - **Drop to play.** Drag a video or a folder onto the window, or onto `HakuPlayer.exe`, and it plays straight away. With the app already open, it plays in that window.
 
 ## Tour
@@ -37,6 +38,23 @@ built right into the window, with live frosted-glass controls floating over the 
   <tr>
     <td><b>Library</b> · covers, search, favourites, filters by genre or kind, sorting. Anime, TV shows and movies live together; openings and endings get their own section, with a <i>Random</i> shuffle.</td>
     <td><b>Show pages</b> · details, banner and official episode names, fetched automatically. Watched ticks, progress bars, seasons, "What's missing" and "Wrong show info?" to fix a bad match.</td>
+  </tr>
+</table>
+
+### AI upscaling
+
+<img src="docs/images/ai-compare.png" alt="Code Geass: normal enlargement against AI upscaling, zoomed in" width="100%"/>
+
+Code Geass at 1080p, zoomed in on a 4K screen: the normal enlargement on the left, AnimeJaNai on the right. Line art comes out crisp instead of soft.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/ai-start.gif" alt="AI upscaling starting"/></td>
+    <td width="50%"><img src="docs/images/ai-settings.png" alt="AI upscaling settings"/></td>
+  </tr>
+  <tr>
+    <td><b>One button</b> · the sparkle button (or <code>Ctrl+U</code>) turns it on or off. It pauses for a moment while the AI fills a second of frames ahead, then plays; the badge shows what it's upscaling to.</td>
+    <td><b>Its own settings page</b> · Auto, Fast, Balanced or Quality, a sharp or soft look, <i>Detect best for this PC</i>, and what TV shows and movies use. It shows each tier's speed on your card.</td>
   </tr>
 </table>
 
@@ -60,8 +78,8 @@ The controls float over the video in two glass pills. They blur, brighten and be
     <td><img src="docs/images/player.png" alt="Player controls"/></td>
   </tr>
   <tr>
-    <td><b>Quick settings</b> · audio and subtitle tracks, your own subtitle files with timing fixes, speed, and per-kind language defaults.</td>
-    <td><b>Timeline previews</b> · exact frames on hover, decoded on the GPU in the background, starting where you hover. Plus a 4K / codec badge, fill-to-screen, fullscreen and an always-on-top pop-out.</td>
+    <td><b>Quick settings</b> · audio and subtitle tracks, your own subtitle files with timing fixes, speed, AI upscaling tier and look, and per-kind language defaults.</td>
+    <td><b>The bar</b> · the timeline shows how far ahead the file is loaded (blue) and the frames the AI has ready (green), with exact-frame previews on hover. The badge shows the resolution and codec, and what the AI is upscaling to.</td>
   </tr>
 </table>
 
@@ -100,10 +118,22 @@ The controls float over the video in two glass pills. They blur, brighten and be
 - Timeline: exact-frame hover previews, chapter ticks, opening and ending marked. Previews decode outward from where you hover, on the GPU (CUDA) with a CPU fallback, and are cached.
 - Skip opening, ending and recap (optionally automatic), an Up next countdown and Autoplay.
 - Audio and subtitle menu that prefers full subtitles over signs-only. Add your own subtitle files and shift their timing; both are remembered per video.
-- Speed, volume (wheel works anywhere), fill-to-screen for near-16:9 screens, fullscreen, and a pop-out player that stays on top.
+- Speed, volume (wheel works anywhere), fill-to-screen for near-16:9 screens, fullscreen, and a pop-out player that stays on top. Exact seeks land in under a fifth of a second, even with AI upscaling on.
 - The window keeps the video's shape when you resize it. Keyboard shortcuts are mpv's (space, arrows, `f`, `m`, `j`, `z`/`x`…).
 - Debug panel: codec, colour, decoder, frame rate, dropped frames, A/V sync and bitrate.
-- AI upscaling: a sparkle button (green while it runs) and `Ctrl+U`, its own settings page with Auto / Fast / Balanced / Quality tiers and a sharp or soft look, and *Detect best for this PC*, which times each tier on your card. The badge shows what it's upscaling to (`1080p → 4K`); the timeline shows the read-ahead in blue and the frames already upscaled in green. It waits a second before playing, and after a seek, so the AI is running first; if frames start dropping, it turns itself off for that video.
+</details>
+
+<details id="ai-upscaling">
+<summary><b>AI upscaling</b></summary>
+
+- Real-time 2× AI upscaling with [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) V3 models on NVIDIA TensorRT, in a filter built into Haku's own libmpv. Every frame stays on the GPU, and subtitles, controls and the glass are drawn after it, at full resolution.
+- Tiers: **Fast**, **Balanced** and **Quality** (on an RTX 4070 at 1080p: about 85, 31 and 17 fps), plus **Auto**, which picks the best one that keeps up with each video's size and frame rate. A **sharp** or **soft** look.
+- *Detect best for this PC* times each tier on your card, and Auto then uses the measured speeds.
+- A second of frames upscaled ahead of playback, shown in green on the timeline. Starting a video, turning AI on and clicking the timeline wait a moment for it to fill, with a loading panel. Turning AI on while paused shows the AI picture straight away.
+- If a tier can't keep up with a video, Auto steps down to a faster one for that video; it only turns off if the fastest can't keep up either.
+- Any video up to 2560×1728 (1080p, 1440×1080 4:3, 720p, SD), 8- or 10-bit. 4K files and HDR play as they are.
+- **TV shows and movies** use NVIDIA's **RTX Video Super Resolution**, made for live action and light on the GPU, sized to fill your screen. Cartoons in those libraries (IMDb's *Animation* genre, like South Park or Rick and Morty) use the anime model. You can choose RTX Video, the anime model or off.
+- The sparkle button glows green while upscaling, and its tooltip says what it's doing and how many frames are ready.
 </details>
 
 <details>
@@ -124,7 +154,7 @@ The controls float over the video in two glass pills. They blur, brighten and be
 | **libmpv** | To build: put `libmpv-2.dll` in `lib\` (see below). It's copied next to the exe, so nothing else to install |
 | **FFmpeg** | `winget install Gyan.FFmpeg` (`ffmpeg` / `ffprobe` on `PATH`), for previews, opening/ending detection and stats |
 | **GPU** | Any. NVIDIA cards decode timeline previews with CUDA; others fall back to the CPU |
-| **AI upscaling** (optional) | An NVIDIA RTX card, Haku's own `libmpv-2.dll` (with its `vf_hakusr` filter) and the TensorRT runtime and models in `%LOCALAPPDATA%\Haku Upscaler`. How to build all three: [native/README.md](native/README.md). Without them the option just stays off |
+| **AI upscaling** (optional) | An NVIDIA RTX card; Haku's own `libmpv-2.dll` (with its `vf_hakusr` filter) and `haku_sr.dll`, built into `lib\` and copied next to the exe; and the TensorRT runtime and models in `%LOCALAPPDATA%\Haku Upscaler`. How to build them: [native/README.md](native/README.md). Without them the option just stays off |
 
 ## Getting started
 
@@ -179,13 +209,16 @@ powershell -ExecutionPolicy Bypass -File tests\app-tests.ps1      # the app, end
 The app tests build a test copy with its own data folder (your settings and history aren't touched) and drive it through
 mpv's pipe and UI Automation: the AI start-up buffer, exact seeks, pausing, the AI button, turning it on while paused, a
 10-bit 30 fps video (no frame drops, no green edge), a 4K file, subtitle choice, the next episode, your own subtitle files,
-leaving the player mid-start, show-detail matching, and no UI stalls or "not responding" anywhere. The test videos are
-set at the top of `tests\app-tests.ps1`: point them at files you have.
+RTX Video on a live-action show and the anime model on a cartoon, leaving the player mid-start, show-detail matching, the
+window staying on its monitor, and no UI stalls or "not responding" anywhere. Put your own test videos in
+`tests\media.local.ps1` (git-ignored; the keys are listed in `tests\app-tests.ps1`). Test windows can go on another
+monitor and never take focus: set `$TestWindow = "x,y,w,h"` there, in screen pixels.
 
 ## How it works
 
 The short version: mpv runs inside the app as a library and draws each frame into a Direct3D texture that WPF shows like any other image, so the video, the controls and the window resize as one picture. The app drives mpv over its JSON IPC pipe, and the blur under the controls is a shader running inside mpv.
 [**docs/how-it-works.md**](docs/how-it-works.md) has the details: the glass shader, why fades are drawn by one renderer only, how openings are detected from audio fingerprints, and more.
+AI upscaling is an mpv video filter (`vf_hakusr`) that hands D3D11 decoder frames to TensorRT and back without leaving the GPU, on its own thread, a second ahead: [**docs/realtime-upscaling-plan.md**](docs/realtime-upscaling-plan.md) and [**native/README.md**](native/README.md).
 
 ## Privacy
 
@@ -199,7 +232,7 @@ turn it on, talks to the Discord app on your own PC.
 - [AniList](https://anilist.co), [AnimeThemes](https://animethemes.moe), [Cinemeta](https://v3-cinemeta.strem.io), [AniSkip](https://aniskip.com), [TheIntroDB](https://theintrodb.org) and [IntroDB](https://introdb.app) for their free APIs.
 - AI upscaling: [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) models by the-database (CC BY-NC-SA 4.0, not included), run with [NVIDIA TensorRT](https://developer.nvidia.com/tensorrt).
 - [Outfit](https://github.com/Outfitio/Outfit-Fonts) by The Outfit Project Authors, under the [SIL Open Font License](Assets/Fonts/OFL-Outfit.txt).
-- Artwork in the screenshots belongs to its owners. The videos shown are the author's own 4K upscales.
+- Artwork in the screenshots belongs to its owners. The screenshots show the author's own library.
 
 Haku Player plays files you already have; it doesn't include, find or download any videos.
 
