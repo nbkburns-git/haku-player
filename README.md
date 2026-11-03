@@ -32,8 +32,8 @@ and real-time AI upscaling to 4K on NVIDIA RTX cards.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/openings.png" alt="Library grid"/></td>
-    <td width="50%"><img src="docs/images/show.png" alt="Show page"/></td>
+    <td width="50%"><img src="docs/images/library.png" alt="Library grid with anime, TV shows and movies"/></td>
+    <td width="50%"><img src="docs/images/show.png" alt="Rick and Morty show page"/></td>
   </tr>
   <tr>
     <td><b>Library</b> · covers, search, favourites, filters by genre or kind, sorting. Anime, TV shows and movies live together; openings and endings get their own section, with a <i>Random</i> shuffle.</td>
@@ -43,9 +43,9 @@ and real-time AI upscaling to 4K on NVIDIA RTX cards.
 
 ### AI upscaling
 
-<img src="docs/images/ai-compare.png" alt="Code Geass: normal enlargement against AI upscaling, zoomed in" width="100%"/>
+<img src="docs/images/ai-compare.png" alt="Code Geass, Rick and Morty and Band of Brothers: normal enlargement against AI upscaling, zoomed in" width="100%"/>
 
-Code Geass at 1080p, zoomed in on a 4K screen: the normal enlargement on the left, AnimeJaNai on the right. Line art comes out crisp instead of soft.
+1080p on a 4K screen, zoomed in: the normal enlargement on the left, Haku Player on the right. Anime (Code Geass) and cartoons (Rick and Morty) use AnimeJaNai, so line art comes out crisp instead of soft. Live action (Band of Brothers) uses RTX Video, which sharpens real footage without the painted look an anime model gives it.
 
 <table>
   <tr>
@@ -60,22 +60,22 @@ Code Geass at 1080p, zoomed in on a 4K screen: the normal enlargement on the lef
 
 ### The player
 
-<img src="docs/images/glass.gif" alt="Liquid glass controls fading over the video" width="100%"/>
+<img src="docs/images/glass.gif" alt="Liquid glass controls fading over Band of Brothers" width="100%"/>
 
-The controls float over the video in two glass pills. They blur, brighten and bend the moving picture underneath, and fade away after a couple of seconds.
+The controls float over the video in two glass pills. They blur, brighten and bend the moving picture underneath, and fade away after a couple of seconds. Here on Band of Brothers, upscaled by RTX Video.
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/skip.gif" alt="Skip opening"/></td>
-    <td width="50%"><img src="docs/images/upnext.gif" alt="Up next countdown"/></td>
+    <td width="50%"><img src="docs/images/skip.gif" alt="Skip opening on Fullmetal Alchemist: Brotherhood"/></td>
+    <td width="50%"><img src="docs/images/upnext.gif" alt="Up next countdown on Death Note"/></td>
   </tr>
   <tr>
     <td><b>Skip opening / ending</b> · appears for the first 8 seconds, and again whenever the controls are up. Openings, endings and chapters are marked on the timeline.</td>
     <td><b>Up next</b> · when the ending starts, the next episode plays after a 10-second countdown. <i>Play now</i> or <i>Cancel</i>.</td>
   </tr>
   <tr>
-    <td><img src="docs/images/menu.gif" alt="Player quick settings"/></td>
-    <td><img src="docs/images/player.png" alt="Player controls"/></td>
+    <td><img src="docs/images/menu.gif" alt="Player quick settings on Rick and Morty"/></td>
+    <td><img src="docs/images/player.png" alt="Player controls on South Park"/></td>
   </tr>
   <tr>
     <td><b>Quick settings</b> · audio and subtitle tracks, your own subtitle files with timing fixes, speed, AI upscaling tier and look, and per-kind language defaults.</td>
