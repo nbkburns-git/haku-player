@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <tuple>
 #include <vector>
 #include "haku_sr.h"
 
@@ -114,12 +115,53 @@ int main(int argc, char **argv)
         while (ctx->GetData(q, nullptr, 0, 0) == S_FALSE) {}
         QueryPerformanceCounter(&t1);
         double ms = (t1.QuadPart - t0.QuadPart) * 1000.0 / f.QuadPart / N;
-        printf("%s: %.2f ms per frame (%.1f fps)\n", label, ms, 1000.0 / ms);
+        printf("%s: %.2f ms per frame (%.1f fps)%s\n", label, ms, 1000.0 / ms, engine ? "" : "");
+        if (engine) printf("%s: model alone %.2f ms of it (%.0f%%)\n", label, hsr_model_ms(s), 100.0 * hsr_model_ms(s) / ms);
         q->Release(); rb->Release(); out->Release();
         hsr_destroy(s);
     };
 
     run(nullptr, "bilinear", W);
+
+    // A padded decoder texture: a grey 1432x1080 picture in 1440x1088, with empty padding (Y = U = V = 0, which reads as
+    // green). The last column and row must stay grey: the chroma sample may not reach into the padding.
+    {
+        const int PW = 1440, PH = 1088, VW = 1432;
+        std::vector<uint8_t> p((size_t)PW * PH * 3 / 2, 0);
+        for (int y = 0; y < H; y++) for (int x = 0; x < VW; x++) p[(size_t)y * PW + x] = 126;
+        uint8_t *puv = p.data() + (size_t)PW * PH;
+        for (int y = 0; y < H / 2; y++) for (int x = 0; x < VW / 2; x++) { puv[(size_t)y * PW + 2 * x] = 128; puv[(size_t)y * PW + 2 * x + 1] = 128; }
+        D3D11_TEXTURE2D_DESC pd = td;
+        pd.Width = PW; pd.Height = PH;
+        D3D11_SUBRESOURCE_DATA psd = {p.data(), (UINT)PW, 0};
+        ID3D11Texture2D *pin = nullptr;
+        dev->CreateTexture2D(&pd, &psd, &pin);
+        hsr *s = hsr_create(dev, nullptr, VW, H);
+        int ow, oh;
+        hsr_output_size(s, &ow, &oh);
+        D3D11_TEXTURE2D_DESC od = {};
+        od.Width = ow; od.Height = oh; od.MipLevels = 1; od.ArraySize = 1; od.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+        od.SampleDesc.Count = 1; od.Usage = D3D11_USAGE_DEFAULT; od.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+        ID3D11Texture2D *out = nullptr, *rb = nullptr;
+        dev->CreateTexture2D(&od, nullptr, &out);
+        hsr_yuv2rgb csp = bt709_limited_8bit();
+        hsr_process(s, pin, 0, &csp, out);
+        D3D11_TEXTURE2D_DESC rd = od;
+        rd.Usage = D3D11_USAGE_STAGING; rd.BindFlags = 0; rd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        dev->CreateTexture2D(&rd, nullptr, &rb);
+        ctx->CopyResource(rb, out);
+        D3D11_MAPPED_SUBRESOURCE m;
+        ctx->Map(rb, 0, D3D11_MAP_READ, 0, &m);
+        auto px = [&](int x, int y, int c) { return half_to_float(((uint16_t *)((uint8_t *)m.pData + (size_t)y * m.RowPitch))[x * 4 + c]); };
+        for (auto [x, y, where] : {std::tuple{ow - 1, oh / 2, "last column"}, std::tuple{ow / 2, oh - 1, "last row"}}) {
+            float r = px(x, y, 0), g = px(x, y, 1), b = px(x, y, 2);
+            printf("padded 1432x1080 %s: %.3f %.3f %.3f\n", where, r, g, b);
+            CHECK(std::fabs(r - 0.5023f) < 0.02f && std::fabs(g - 0.5023f) < 0.02f && std::fabs(b - 0.5023f) < 0.02f, "padded %s isn't grey (green edge)", where);
+        }
+        ctx->Unmap(rb, 0);
+        rb->Release(); out->Release(); pin->Release();
+        hsr_destroy(s);
+    }
 
     if (argc >= 3) {
         std::wstring onnx(argv[1], argv[1] + strlen(argv[1])), dir(argv[2], argv[2] + strlen(argv[2]));

@@ -126,6 +126,31 @@
       </Border>
     </Grid>
 
+    <!-- AI upscaling getting ready (engine, first frames, the buffer before playing): spinning ring, pulsing sparkle, buffer bar -->
+    <ContentControl x:Name="AiLoading" Style="{StaticResource GlassPanel}" Visibility="Collapsed" Opacity="0" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Padding="22,18,26,18" IsHitTestVisible="False">
+      <StackPanel Orientation="Horizontal">
+        <Grid Width="54" Height="54" VerticalAlignment="Center">
+          <Ellipse StrokeThickness="3" Stroke="#22FFFFFF"/>
+          <Ellipse StrokeThickness="3" StrokeDashArray="9 24" StrokeDashCap="Round" Stroke="#FF3DDC84" RenderTransformOrigin="0.5,0.5">
+            <Ellipse.RenderTransform><RotateTransform x:Name="AiRingRot"/></Ellipse.RenderTransform>
+          </Ellipse>
+          <TextBlock Text="&#xF4A5;" FontFamily="Segoe Fluent Icons" FontSize="22" Foreground="#FF3DDC84" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5">
+            <TextBlock.RenderTransform><ScaleTransform x:Name="AiSparkPulse"/></TextBlock.RenderTransform>
+            <TextBlock.Effect><DropShadowEffect Color="#FF3DDC84" BlurRadius="16" ShadowDepth="0" Opacity="0.9"/></TextBlock.Effect>
+          </TextBlock>
+        </Grid>
+        <StackPanel VerticalAlignment="Center" Margin="16,0,0,0" Width="230">
+          <TextBlock x:Name="AiLoadText" FontSize="15.5" FontWeight="SemiBold" Foreground="{StaticResource Text}" TextTrimming="CharacterEllipsis"/>
+          <TextBlock x:Name="AiLoadSub" FontSize="12.5" Foreground="{StaticResource Muted}" Margin="0,3,0,0"/>
+          <Grid x:Name="AiLoadBar" Height="4" Margin="0,9,0,0" HorizontalAlignment="Stretch">
+            <Border CornerRadius="2" Background="#22FFFFFF"/>
+            <Border x:Name="AiLoadFill" CornerRadius="2" Background="#FF3DDC84" HorizontalAlignment="Left" Width="0"/>
+          </Grid>
+        </StackPanel>
+      </StackPanel>
+    </ContentControl>
+
     <!-- Debug info (Settings > Debug info): live playback details, refreshed every second -->
     <ContentControl x:Name="DebugPanel" Style="{StaticResource GlassPanel}" Visibility="Collapsed" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="24,92,24,0"
                     Padding="16,12" IsHitTestVisible="False">

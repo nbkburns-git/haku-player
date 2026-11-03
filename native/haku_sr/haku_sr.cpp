@@ -1,4 +1,4 @@
-﻿// haku_sr: see haku_sr.h.
+// haku_sr: see haku_sr.h.
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #define HAKU_SR_EXPORTS
@@ -141,7 +141,11 @@ void main(uint3 id : SV_DispatchThreadID)
 {
     if (id.x >= W || id.y >= H) return;
     float y = Yp.Load(int3(id.xy, 0));
-    float2 c = UVp.SampleLevel(S, float2((id.x * 0.5 + 0.5) / CW, (id.y * 0.5 + 0.25) / CH), 0);
+    // the decoder's texture is padded (1432 wide in 1440 or more, 1080 tall in 1088): keep the chroma sample inside the
+    // picture, or the last column / row blends in the padding's empty chroma, which shows as a green line
+    float cx = min(id.x * 0.5 + 0.5, (float)((W + 1) / 2) - 0.5);
+    float cy = min(id.y * 0.5 + 0.25, (float)((H + 1) / 2) - 0.5);
+    float2 c = UVp.SampleLevel(S, float2(cx / CW, cy / CH), 0);
     float3 v = float3(y, c.x, c.y);
     float3 rgb = saturate(float3(dot(r0.xyz, v) + r0.w, dot(r1.xyz, v) + r1.w, dot(r2.xyz, v) + r2.w));
     uint i = id.y * W + id.x, n = W * H;
@@ -236,6 +240,9 @@ struct hsr {
     std::string in_name, out_name;
     cudaStream_t stream = nullptr;
     cudaGraphicsResource *res[2] = {};
+    cudaEvent_t ev0 = nullptr, ev1 = nullptr; // around the model, for hsr_stats
+    double model_ms = 0, total_ms = 0;        // running totals since hsr_create
+    int frames = 0;
     int cuda_dev = 0;
 };
 
@@ -335,6 +342,8 @@ extern "C" HSR_API hsr *hsr_create(ID3D11Device *dev, const wchar_t *engine_path
         }
         CU(cudaSetDevice(s->cuda_dev), "cudaSetDevice");
         CU(cudaStreamCreateWithFlags(&s->stream, cudaStreamNonBlocking), "cudaStreamCreate");
+        CU(cudaEventCreate(&s->ev0), "cudaEventCreate");
+        CU(cudaEventCreate(&s->ev1), "cudaEventCreate");
         if (!load_engine(s, engine_path))
             goto fail;
     } else {
@@ -486,10 +495,14 @@ extern "C" HSR_API int hsr_process(hsr *s, ID3D11Texture2D *in_tex, int in_slice
         bool ok = cudaGraphicsResourceGetMappedPointer(&pin, &sz, s->res[0]) == cudaSuccess &&
                   cudaGraphicsResourceGetMappedPointer(&pout, &sz, s->res[1]) == cudaSuccess;
         lock.reset();
+        cudaEventRecord(s->ev0, s->stream);
         ok = ok && s->ec->setTensorAddress(s->in_name.c_str(), pin) &&
              s->ec->setTensorAddress(s->out_name.c_str(), pout) &&
-             s->ec->enqueueV3(s->stream) &&
-             cudaStreamSynchronize(s->stream) == cudaSuccess;
+             s->ec->enqueueV3(s->stream);
+        cudaEventRecord(s->ev1, s->stream);
+        ok = ok && cudaStreamSynchronize(s->stream) == cudaSuccess;
+        float model = 0;
+        if (ok && cudaEventElapsedTime(&model, s->ev0, s->ev1) == cudaSuccess) { s->model_ms += model; s->frames++; }
         lock.emplace(s->mt);
         cudaGraphicsUnmapResources(2, s->res, s->stream);
         if (!ok) { set_err("TensorRT inference failed"); return -1; }
@@ -525,6 +538,8 @@ extern "C" HSR_API void hsr_destroy(hsr *s)
     }
     for (auto &r : s->res)
         if (r) cudaGraphicsUnregisterResource(r);
+    if (s->ev0) cudaEventDestroy(s->ev0);
+    if (s->ev1) cudaEventDestroy(s->ev1);
     if (s->stream) cudaStreamDestroy(s->stream);
     delete s->ec;
     delete s->eng;
@@ -671,3 +686,6 @@ done:
     dev->Release();
     return fps;
 }
+
+// Average GPU time of the model per frame so far (for profiling: compare with the whole frame's time).
+extern "C" HSR_API double hsr_model_ms(hsr *s) { return s && s->frames ? s->model_ms / s->frames : 0; }

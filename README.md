@@ -169,6 +169,19 @@ Movies\                        ← marked "Movies"
 Everything Haku Player stores (settings, watch history, fetched details, covers, preview cache) lives in
 `%LOCALAPPDATA%\Haku Player`. Your media folders are only ever read, except for a downloaded anime `cover.jpg`.
 
+## Tests
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tests\native-tests.ps1   # haku_sr.dll: colours, padded edges, speed per tier
+powershell -ExecutionPolicy Bypass -File tests\app-tests.ps1      # the app, end to end (a few minutes, muted)
+```
+
+The app tests build a test copy with its own data folder (your settings and history aren't touched) and drive it through
+mpv's pipe and UI Automation: the AI start-up buffer, exact seeks, pausing, the AI button, turning it on while paused, a
+10-bit 30 fps video (no frame drops, no green edge), a 4K file, subtitle choice, the next episode, your own subtitle files,
+leaving the player mid-start, show-detail matching, and no UI stalls or "not responding" anywhere. The test videos are
+set at the top of `tests\app-tests.ps1`: point them at files you have.
+
 ## How it works
 
 The short version: mpv runs inside the app as a library and draws each frame into a Direct3D texture that WPF shows like any other image, so the video, the controls and the window resize as one picture. The app drives mpv over its JSON IPC pipe, and the blur under the controls is a shader running inside mpv.

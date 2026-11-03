@@ -29,6 +29,7 @@ public partial class MainWindow
     {
         if (!aiHolding) Send(new object[] { "set_property", "pause", true });
         aiHolding = true;
+        controls?.SetAiLoading(upscaleActive ? "AI buffering" : "Starting AI upscaling");
         int id = ++aiHoldId;
         _ = Task.Delay(12000).ContinueWith(_ => Dispatcher.Invoke(() => { if (aiHoldId == id) AiRelease(0); })); // never stuck paused
     }
@@ -41,6 +42,7 @@ public partial class MainWindow
         if (!aiHolding || id != aiHoldId) return;
         aiHolding = false;
         if (upscaleActive) guardFrom = DateTime.UtcNow.AddSeconds(3); // the first frames after a seek may drop: don't count them
+        controls?.SetAiLoading(null);
         Send(new object[] { "set_property", "pause", false });
     }
 
@@ -63,7 +65,8 @@ public partial class MainWindow
         if (upscaleActive) guardFrom = DateTime.UtcNow.AddSeconds(3);
         if (releaseOnRestart) { releaseOnRestart = false; AiRelease(1000); }
     }
-    void AiPauseChanged(bool paused) { if (!paused) { aiHolding = false; releaseOnRestart = false; } }
+    void AiPauseChanged(bool paused) { if (!paused) { aiHolding = false; releaseOnRestart = false; if (!aiStarting) controls?.SetAiLoading(null); } }
+    bool aiStarting; // the filter is going in and its first upscaled frame isn't out yet (the loading panel stays meanwhile)
 
     // A new file in the playlist: decide again.
     void ResetUpscale()
@@ -72,6 +75,7 @@ public partial class MainWindow
         upscaleKey = null;
         upscaleBlocked = false;
         tierLimit = int.MaxValue;
+        aiStarting = false;
         dropBase = -1;
     }
 
@@ -134,15 +138,16 @@ public partial class MainWindow
         if (tier == null)
         {
             controls?.SetUpscaleButton(Settings.Current.Upscale, false, $"AI upscaling: {why}");
-            if (w > 0 && h > 0) AiRelease(0); // not upscaling this video: no reason to wait
+            aiStarting = false;
+            if (w > 0 && h > 0) { AiRelease(0); controls?.SetAiLoading(null); } // not upscaling this video: no reason to wait
             return;
         }
 
         if (!File.Exists(Upscaler.EngineFile(model)))
         {
             AiRelease(0); // play normally while the engine is built (seconds); the buffer comes back when it's added
-            Toast($"Preparing AI upscaling ({tier.Name}): once, about 15 seconds");
             controls?.SetUpscaleButton(true, false, $"AI upscaling: preparing {tier.Name} (once, about 15 seconds)");
+            controls?.SetAiLoading($"Preparing AI upscaling ({tier.Name})", sub: "Once for your graphics card, about 15 seconds. Playing meanwhile.");
         }
         string? err = await Upscaler.Prepare(model);
         if (my != session || upscaleKey != key) return;
@@ -151,11 +156,22 @@ public partial class MainWindow
             Toast($"AI upscaling unavailable: {err}");
             controls?.SetUpscaleButton(true, false, $"AI upscaling unavailable: {err}");
             AiRelease(0);
+            controls?.SetAiLoading(null);
             return;
         }
 
-        if (controls is { Paused: false } || aiHolding) AiHold(); // the filter loads its engine before the first upscaled frame
+        // the buffer holds a second of video: ask the frame rate if it hasn't arrived yet (it often comes after the size)
+        if (videoFps <= 0 && double.TryParse(await Ask(new object[] { "get_property_string", "container-fps" }), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var fpsNow)) videoFps = fpsNow;
+        if (my != session || upscaleKey != key) return;
+        bool pausedByYou = controls is { Paused: true } && !aiHolding;
+        if (!pausedByYou) AiHold(); // the filter loads its engine before the first upscaled frame
+        aiStarting = true;
+        controls?.SetAiLoading("Starting AI upscaling");
         Send(new object[] { "vf", "add", Upscaler.Filter(model, videoFps) });
+        // paused: mpv redraws the paused frame through the new filter by seeking to it, decoding from the keyframe before;
+        // those frames are thrown away, so they skip the AI (otherwise the AI picture only appeared on pressing play)
+        if (pausedByYou && controls != null)
+            Send(new object[] { "vf-command", Upscaler.Label, "skip_until", controls.Position.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture) });
         upscaleActive = true;
         dropBase = -1;
         // it took once mpv's output is the model's size (the filter passes frames through when it can't upscale);
@@ -167,14 +183,18 @@ public partial class MainWindow
             if (my != session || upscaleKey != key) return;
             string? ow = await Ask(new object[] { "get_property_string", "video-out-params/w" });
             took = int.TryParse(ow, out int outW) && outW >= w * 2 - 1;
+            string? f0 = await Ask(new object[] { "get_property_string", $"vf-metadata/{Upscaler.Label}/frames" });
+            string? c0 = await Ask(new object[] { "get_property_string", $"vf-metadata/{Upscaler.Label}/cap" });
+            if (aiStarting && int.TryParse(c0, out int cc) && cc > 2) controls?.SetAiLoading("Starting AI upscaling", int.TryParse(f0, out int ff) ? ff : 0, cc);
         }
+        aiStarting = false;
         if (took)
         {
             guardFrom = DateTime.UtcNow.AddSeconds(3);
             controls?.SetUpscale(h * 2);
             controls?.SetUpscaleButton(true, true, $"AI upscaling on: {tier.Name}, {(look == "soft" ? "soft" : "sharp")} look, {w}×{h} → {w * 2}×{h * 2} (Ctrl+U)");
             Toast($"AI upscaling on: {tier.Name}, {(look == "soft" ? "soft" : "sharp")} look");
-            AiRelease(1000);
+            if (aiHolding) AiRelease(1000); else controls?.SetAiLoading(null); // paused by you: it's ready, nothing to wait for
             PollAiBuffer(my, key);
         }
         else
@@ -182,6 +202,7 @@ public partial class MainWindow
             Send(new object[] { "vf", "remove", "@" + Upscaler.Label });
             upscaleActive = false;
             AiRelease(0);
+            controls?.SetAiLoading(null);
             controls?.SetUpscaleButton(true, false, "AI upscaling couldn't start for this video");
             Toast("AI upscaling couldn't start for this video");
         }
@@ -204,6 +225,7 @@ public partial class MainWindow
                 else if ((DateTime.UtcNow - lowSince).TotalSeconds >= 2) { lowSince = DateTime.MaxValue; if (StepDown(my)) break; }
             }
             else lowSince = DateTime.MaxValue;
+            if (aiHolding && int.TryParse(cap, out int hc) && hc > 0) controls?.SetAiLoading("AI buffering", int.TryParse(frames, out int hf) ? hf : 0, hc);
             controls?.SetAiBuffer(int.TryParse(frames, out int n) ? n : 0, int.TryParse(cap, out int c) ? c : 0,
                 double.TryParse(until, System.Globalization.NumberStyles.Float, inv, out double u) ? u : -1);
             await Task.Delay(250);

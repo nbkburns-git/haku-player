@@ -1,4 +1,4 @@
-﻿// haku_sr: Haku Player's GPU upscaler. mpv's vf_hakusr filter calls it with D3D11 decoder frames; it converts them to RGB,
+// haku_sr: Haku Player's GPU upscaler. mpv's vf_hakusr filter calls it with D3D11 decoder frames; it converts them to RGB,
 // runs a TensorRT super-resolution engine (or a plain bilinear 2x, for testing the plumbing) and writes an RGBA16F frame.
 // Everything stays on the GPU: D3D11 compute shaders around TensorRT, with buffers shared through CUDA's D3D11 interop.
 #pragma once
@@ -48,6 +48,9 @@ HSR_API int hsr_process(hsr *s, struct ID3D11Texture2D *in_tex, int in_slice, co
                         struct ID3D11Texture2D *out_tex);
 
 HSR_API void hsr_destroy(hsr *s);
+
+// Average GPU time of the model per frame so far, in ms (profiling).
+HSR_API double hsr_model_ms(hsr *s);
 
 // Largest input an engine takes (any size from 64x64 up to this works with one engine).
 #define HSR_MAX_W 2560

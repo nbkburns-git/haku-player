@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -304,8 +304,45 @@ public partial class PlayerControls : UserControl
     public Action ApplyUpscale = () => { };    // MainWindow: tier or look changed in the menu
 
     // The AI button: accent while upscaling, bright when on but not upscaling this video, dimmed when off.
+    // AI upscaling getting ready: the glass panel in the middle (text, and the buffer filling when cap > 0), and the sparkle
+    // button pulsing green. null hides it.
+    public void SetAiLoading(string? text, int frames = 0, int cap = 0, string? sub = null)
+    {
+        if (text == null)
+        {
+            if (!aiLoadingOn) return;
+            aiLoadingOn = false;
+            var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(220));
+            fade.Completed += (_, _) => { if (!aiLoadingOn) { AiLoading.Visibility = Visibility.Collapsed; AiRingRot.BeginAnimation(RotateTransform.AngleProperty, null); AiSparkPulse.BeginAnimation(ScaleTransform.ScaleXProperty, null); AiSparkPulse.BeginAnimation(ScaleTransform.ScaleYProperty, null); } };
+            AiLoading.BeginAnimation(OpacityProperty, fade);
+            SetUpscaleButton(btnOn, btnActive, aiTip); // back to the button's own state
+            return;
+        }
+        AiLoadText.Text = text;
+        AiLoadSub.Text = sub ?? (cap > 0 ? $"{frames} of {cap} frames ready" : "Getting the AI ready");
+        AiLoadFill.Width = cap > 0 ? Math.Round(230.0 * Math.Clamp((double)frames / cap, 0, 1)) : 0;
+        if (aiLoadingOn) return;
+        aiLoadingOn = true;
+        AiLoading.Visibility = Visibility.Visible;
+        AiLoading.BeginAnimation(OpacityProperty, new DoubleAnimation(1, TimeSpan.FromMilliseconds(220)));
+        AiRingRot.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, 360, TimeSpan.FromSeconds(1.1)) { RepeatBehavior = RepeatBehavior.Forever });
+        var pulse = new DoubleAnimation(0.82, 1.08, TimeSpan.FromMilliseconds(650)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase() };
+        AiSparkPulse.BeginAnimation(ScaleTransform.ScaleXProperty, pulse);
+        AiSparkPulse.BeginAnimation(ScaleTransform.ScaleYProperty, pulse);
+        // the button breathes green meanwhile
+        AiBtn.Foreground = AiGreen;
+        var glow = new System.Windows.Media.Effects.DropShadowEffect { Color = AiGreen.Color, BlurRadius = 20, ShadowDepth = 0 };
+        glow.BeginAnimation(System.Windows.Media.Effects.DropShadowEffect.OpacityProperty, new DoubleAnimation(0.15, 1, TimeSpan.FromMilliseconds(650)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever });
+        AiBtn.Effect = glow;
+    }
+
+    bool btnOn, btnActive;
+    bool aiLoadingOn;
+
     public void SetUpscaleButton(bool on, bool active, string tip)
     {
+        btnOn = on; btnActive = active;
+        if (aiLoadingOn) { aiTip = tip; AiBtn.ToolTip = AiTip(); return; } // keeps breathing until the loading panel goes
         AiBtn.Opacity = on ? 1 : 0.4;
         // upscaling: the AI green of the timeline's buffer, glowing
         AiBtn.Foreground = active ? AiGreen : (Brush)FindResource("Text");
@@ -357,6 +394,10 @@ public partial class PlayerControls : UserControl
             bool Flag(string k) => t.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.True;
             tracks.Add((id, type, lang.ToLowerInvariant(), label, Flag("selected"), Get("title"), Flag("forced"), Flag("default")));
         }
+        // the first file often finishes loading before Haku is listening, so mpv's "file-loaded" never comes for it (it kept
+        // mpv's default subtitles, often "Signs & Songs", and lost your added subtitles and timing): its track list does
+        if (currentFile != "" && loadedFor != currentFile && tracks.Count > 0) FileLoaded();
+        if (pickSubsFor != null && pickSubsFor == currentFile && tracks.Any(t => t.Type == "sub")) { pickSubsFor = null; PickSubs(); }
         if (openMenu == "tracks") BuildMenu();
     }
 
@@ -625,6 +666,8 @@ public partial class PlayerControls : UserControl
     // ---------- your own subtitles ----------
 
     string currentFile = "";
+    string? pickSubsFor; // a video that has loaded and still needs its subtitle track picked
+    string? loadedFor;   // the video FileLoaded last ran for
     double subDelay;
     public string CurrentFile => currentFile;     // for "Continue watching"
     public double Position => time;
@@ -663,6 +706,8 @@ public partial class PlayerControls : UserControl
     public async void FileLoaded()
     {
         var file = currentFile;
+        if (loadedFor == file) return; // once per file: mpv's event or the file's first track list, whichever comes first
+        loadedFor = file;
         if (S.ExtraSubs.TryGetValue(currentFile, out var list) && list.Any(System.IO.File.Exists))
         {
             var present = list.Where(System.IO.File.Exists).ToList();
@@ -671,9 +716,12 @@ public partial class PlayerControls : UserControl
         }
         else
         {
-            // your own subtitles win; otherwise pick the best track once this video's track list has arrived
+            // your own subtitles win; otherwise pick the best track once this video's track list has arrived (SetTracks).
+            // A fixed wait missed it on slow drives, leaving mpv's default (often "Signs & Songs"); this one is a backup in
+            // case the list came before this event.
+            pickSubsFor = file;
             await Task.Delay(300);
-            if (file == currentFile) PickSubs();
+            if (file == currentFile && pickSubsFor == file && tracks.Any(t => t.Type == "sub")) { pickSubsFor = null; PickSubs(); }
         }
         Send(new object[] { "set_property", "sub-delay", S.SubDelays.GetValueOrDefault(currentFile) });
     }
