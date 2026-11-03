@@ -115,8 +115,15 @@ public partial class MainWindow
         if (SettingsLayer.IsVisible) BuildGlobalSettings();
     }
 
-    // TV shows and movies: NVIDIA's RTX Video (made for live action), the anime model, or nothing (Settings.UpscaleLiveAction)
-    string LiveActionMode => playingEntry?.Kind is "tv" or "movie" ? Settings.Current.UpscaleLiveAction : "anime";
+    // TV shows and movies: NVIDIA's RTX Video (made for live action), the anime model, or nothing (Settings.UpscaleLiveAction).
+    // Cartoons in the TV or movie library (South Park, Rick and Morty: IMDb's "Animation" genre, in the show's details) are
+    // drawn like anime, so they get the anime model.
+    string LiveActionMode => playingEntry?.Kind is not ("tv" or "movie") ? "anime"
+        : Settings.Current.UpscaleLiveAction == "rtx" && IsAnimated(playingEntry) ? "anime"
+        : Settings.Current.UpscaleLiveAction;
+
+    internal static bool IsAnimated(Entry e) =>
+        InfoService.Cached(e.InfoKey)?.Genres is { } genres && Array.Exists(genres, g => string.Equals(g, "Animation", StringComparison.OrdinalIgnoreCase));
 
     async void UpdateUpscale(int my)
     {

@@ -29,6 +29,8 @@ $Media = @{
     AnimeLibrary = '' # the anime library folder those are in (for the subtitle, next-episode and show-detail tests)
     LiveAction = ''   # a 1080p live-action TV episode (RTX Video)
     TvLibrary  = ''   # the TV library folder it's in
+    Cartoon    = ''   # a cartoon episode in that library (should get the anime model)
+    CartoonKey = ''   # its saved-details name: 'tv_' + the show's name with non-word characters as _, e.g. 'tv_South_Park'
 }
 # badly named show folders in that library and the title each should get: @{ 'Some_Show_Complete' = 'Some Show' } (folder name with
 # non-word characters as _)
@@ -54,9 +56,12 @@ function Skip($name, $why) { $Results.Add([pscustomobject]@{ Test = $name; Resul
 
 # ---------- the app ----------
 
-function Start-Haku([string]$file, [hashtable]$settings = @{}) {
+function Start-Haku([string]$file, [hashtable]$settings = @{}, [hashtable]$details = @{}) {
     if (Test-Path $DataDir) { Remove-Item $DataDir -Recurse -Force }
     New-Item -ItemType Directory $DataDir | Out-Null
+    # show details as Haku saves them (info\<key>.json), so a test doesn't wait for the network: @{ 'tv_South_Park' = @('Animation', 'Comedy') }
+    if ($details.Count) { New-Item -ItemType Directory (Join-Path $DataDir 'info') | Out-Null }
+    foreach ($k in $details.Keys) { @{ Title = $k; Genres = $details[$k]; Source = 'test' } | ConvertTo-Json | Set-Content (Join-Path $DataDir "info\$k.json") -Encoding utf8 }
     # UpscaleLiveAction = anime: files opened from outside a library count as movies, and these tests are about the AI
     $conf = [ordered]@{ SettingsVersion = 3; Upscale = $true; UpscaleTier = 'auto'; UpscaleLiveAction = 'anime'; Resume = $false; Autoplay = $true; AutoPopOut = $false }
     foreach ($k in $settings.Keys) { $conf[$k] = $settings[$k] }
@@ -303,6 +308,18 @@ try {
             $watch = Watch 8
             $badge = [bool]((Window).FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -match '\s+RTX$' })
             Report 'rtx' ($on -ge 0 -and $vf -match 'd3d11vpp' -and $vf -notmatch 'haku_sr' -and $tip -match 'RTX Video upscaling on' -and $badge -and $watch.Drops -eq 0) "on after $on s: '$(($tip -split "`n")[0])', badge says RTX: $badge, 8 s: $($watch.Drops) drops"
+            Stop-Haku
+        }
+    }
+
+    if (Want 'cartoon') {
+        if (-not ($Media.Cartoon -and (Test-Path -LiteralPath $Media.Cartoon) -and $Media.TvLibrary)) { Skip 'cartoon' "no cartoon file or TV library in media.local.ps1" } else {
+            # a cartoon in the TV library (IMDb genre Animation) gets the anime model, not RTX Video
+            Start-Haku $Media.Cartoon @{ UpscaleLiveAction = 'rtx'; Libs = @(@{ Id = 'tv'; Name = 'TV'; Folders = @(@{ Path = $Media.TvLibrary; Kind = 'tv' }); Home = $true }) } @{ $Media.CartoonKey = @('Animation', 'Comedy') } | Out-Null
+            $w = 0; WaitFor { ($script:w = QN 'width') -gt 0 } 20 | Out-Null
+            $on = WaitFor { (AiTip) -match 'upscaling on' } 25
+            $vf = Q 'vf'; $tip = AiTip
+            Report 'cartoon' ($on -ge 0 -and $vf -match 'haku_sr' -and $vf -notmatch 'd3d11vpp') "on after $on s: '$(($tip -split "`n")[0])'"
             Stop-Haku
         }
     }
