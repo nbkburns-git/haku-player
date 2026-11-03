@@ -1,12 +1,11 @@
 # Haku Player end-to-end tests: AI upscaling, its buffer, seeking, pausing, the AI button, subtitles, show details.
-# Builds a test copy into $outW and runs it with its own data folder (HAKU_DATA_DIR), so your real settings and history are
+# Builds a test copy into $Out and runs it with its own data folder (HAKU_DATA_DIR), so your real settings and history are
 # never touched. Each test drives the app through mpv's JSON pipe and Windows UI Automation (never the real mouse).
 #
 #   powershell -ExecutionPolicy Bypass -File tests\app-tests.ps1            (all tests; a few minutes, plays sound muted)
 #   ... -Only startup,seek -NoBuild
 #
-# The test videos are files from the author's library: change $Media to files you have. A test whose file is missing is
-# skipped. Results: printed, and in $outW\results.json.
+# The test videos are set in tests\media.local.ps1 (see $Media below). Results: printed, and in $Out\results.json.
 param(
     [string]$Out = (Join-Path $env:TEMP "haku-tests"),
     [string[]]$Only = @(),
@@ -18,13 +17,20 @@ $AppDir = Join-Path $Out "app"
 $DataDir = Join-Path $Out "data"
 $TraceFile = Join-Path $Out "trace.txt"
 
+# Your test videos (a missing one skips its tests). Put them in tests\media.local.ps1 (git-ignored), as $Media with the
+# same keys, so your file names stay on your PC.
 $Media = @{
-    H264   = 'D:\TV Shows\South Park Season 1 to 26 Mp4 1080p\Season 02\South Park S02E01.mp4'           # 1920x1080 H.264 23.976
-    Hevc10 = 'A:\Anime\Naruto Complete\Season 01\[Anime Time] Naruto - 001 - Enter Naruto Uzumaki!.mkv'  # 1432x1080 HEVC 10-bit 29.97
-    UHD    = 'A:\Anime Upscaled\Anime Openings\Angel Beats!\AngelBeats-OP1-Encoded.24.000fps.cugan-pro-no-denoise-up2x.fp16.082be5.mp4' # 3840x2160
-    Subs   = 'A:\Anime\Neon Genesis Evangelion Complete Series\[Anime Time] Neon Genesis Evangelion - 01.mkv' # default track: Signs/Songs
-    AnimeLibrary = 'A:\Anime'
+    H264   = ''   # a 1920x1080 H.264 episode, 23.976 fps, at least 6 minutes long (the seek goes to 5:00)
+    Hevc10 = ''   # an HEVC 10-bit video under 1920 wide, ideally not a multiple of 16 (e.g. 1432x1080) at 29.97 fps
+    UHD    = ''   # a 3840x2160 video (should play as it is)
+    Subs   = ''   # episode 01 of a show whose default subtitle track is "Signs & Songs", with episode 02 next to it
+    AnimeLibrary = '' # the anime library folder those are in (for the subtitle, next-episode and show-detail tests)
 }
+# badly named show folders in that library and the title each should get: @{ 'Some_Show_Complete' = 'Some Show' } (folder name with
+# non-word characters as _)
+$ShowDetails = @{}
+$localMedia = Join-Path $PSScriptRoot "media.local.ps1"
+if (Test-Path $localMedia) { . $localMedia }
 
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing
 $UIA = [System.Windows.Automation.AutomationElement]
@@ -136,7 +142,7 @@ if (-not $NoBuild) {
 
 try {
     if ((Want 'startup') -or (Want 'seek') -or (Want 'pause') -or (Want 'button')) {
-        if (-not (Test-Path -LiteralPath $Media.H264)) { Skip 'startup' "missing $($Media.H264)" } else {
+        if (-not (($Media.H264 -and (Test-Path -LiteralPath $Media.H264)))) { Skip 'startup' "missing $($Media.H264)" } else {
             Start-Haku $Media.H264 | Out-Null
             $w = 0; WaitFor { ($script:w = QN 'width') -gt 0 } 20 | Out-Null
             $pausedFirst = (Q 'pause') -eq 'yes'
@@ -181,7 +187,7 @@ try {
     }
 
     if (Want 'paused-enable') {
-        if (-not (Test-Path -LiteralPath $Media.H264)) { Skip 'paused-enable' "missing file" } else {
+        if (-not (($Media.H264 -and (Test-Path -LiteralPath $Media.H264)))) { Skip 'paused-enable' "missing file" } else {
             Start-Haku $Media.H264 @{ Upscale = $false } | Out-Null
             $w = 0; WaitFor { ($script:w = QN 'width') -gt 0 } 20 | Out-Null
             Start-Sleep 3
@@ -198,7 +204,7 @@ try {
     }
 
     if (Want 'hevc10') {
-        if (-not (Test-Path -LiteralPath $Media.Hevc10)) { Skip 'hevc10' "missing file" } else {
+        if (-not (($Media.Hevc10 -and (Test-Path -LiteralPath $Media.Hevc10)))) { Skip 'hevc10' "missing file" } else {
             Start-Haku $Media.Hevc10 | Out-Null
             $w = 0; WaitFor { ($script:w = QN 'width') -gt 0 } 20 | Out-Null
             $took = WaitFor { (QN 'video-out-params/w') -ge 2 * $w - 1 -and (Q 'pause') -eq 'no' } 25
@@ -225,7 +231,7 @@ try {
     }
 
     if (Want 'uhd') {
-        if (-not (Test-Path -LiteralPath $Media.UHD)) { Skip 'uhd' "missing file" } else {
+        if (-not (($Media.UHD -and (Test-Path -LiteralPath $Media.UHD)))) { Skip 'uhd' "missing file" } else {
             Start-Haku $Media.UHD | Out-Null
             WaitFor { (QN 'width') -gt 0 } 20 | Out-Null; Start-Sleep 3
             $outW = QN 'video-out-params/w'; $tip = AiTip; $playing = (Q 'pause') -eq 'no'
@@ -235,7 +241,7 @@ try {
     }
 
     if ((Want 'subtitles') -or (Want 'next-episode')) {
-        if (-not (Test-Path -LiteralPath $Media.Subs)) { Skip 'subtitles' "missing file" } else {
+        if (-not (($Media.Subs -and (Test-Path -LiteralPath $Media.Subs)))) { Skip 'subtitles' "missing file" } else {
             # inside a library, as you'd play it: anime language defaults, and the whole season as the playlist
             Start-Haku $Media.Subs @{ Libs = @(@{ Id = 't'; Name = 'Anime'; Folders = @(@{ Path = $Media.AnimeLibrary; Kind = 'anime' }); Home = $true }) } | Out-Null
             WaitFor { (QN 'width') -gt 0 } 20 | Out-Null; Start-Sleep 3
@@ -258,7 +264,7 @@ try {
     }
 
     if (Want 'own-subtitles') {
-        if (-not (Test-Path -LiteralPath $Media.H264)) { Skip 'own-subtitles' "missing file" } else {
+        if (-not (($Media.H264 -and (Test-Path -LiteralPath $Media.H264)))) { Skip 'own-subtitles' "missing file" } else {
             # a subtitle file you added, and your timing fix, come back on the first video too (it once lost them)
             $srt = Join-Path $Out "mine.srt"
             "1`r`n00:00:01,000 --> 00:10:00,000`r`nHaku test subtitle`r`n" | Set-Content $srt -Encoding utf8
@@ -272,7 +278,7 @@ try {
     }
 
     if (Want 'leave-while-starting') {
-        if (-not (Test-Path -LiteralPath $Media.H264)) { Skip 'leave-while-starting' "missing file" } else {
+        if (-not (($Media.H264 -and (Test-Path -LiteralPath $Media.H264)))) { Skip 'leave-while-starting' "missing file" } else {
             Start-Haku $Media.H264 | Out-Null
             Start-Sleep -Milliseconds 600
             Press 'Back'
@@ -285,9 +291,9 @@ try {
     }
 
     if (Want 'show-details') {
-        if (-not (Test-Path -LiteralPath $Media.AnimeLibrary)) { Skip 'show-details' "missing library" } else {
+        if (-not (($Media.AnimeLibrary -and (Test-Path -LiteralPath $Media.AnimeLibrary)))) { Skip 'show-details' "missing library" } else {
             Start-Haku $null @{ Libs = @(@{ Id = 't'; Name = 'Anime'; Folders = @(@{ Path = $Media.AnimeLibrary; Kind = 'anime' }); Home = $true }) } | Out-Null
-            $want = @{ 'Naruto_Complete' = 'Naruto'; 'Naruto_Shippuden_Complete' = 'Naruto: Shippuden'; 'Neon_Genesis_Evangelion_Complete_Series' = 'Neon Genesis Evangelion'; 'Monster_480p' = 'Monster'; 'Monster_2004_1080p' = 'Monster' }
+            $want = $ShowDetails
             $info = Join-Path $DataDir "info"
             WaitFor { @($want.Keys | Where-Object { Test-Path (Join-Path $info "$_.json") }).Count -eq $want.Count } 120 | Out-Null
             $got = foreach ($k in $want.Keys) { $f = Join-Path $info "$k.json"; if (Test-Path $f) { "$k=$((Get-Content $f -Raw | ConvertFrom-Json).Title)" } else { "$k=(none)" } }

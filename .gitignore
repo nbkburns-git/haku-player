@@ -14,3 +14,5 @@ deps/
 native/haku_sr/build/
 native/haku_sr/out/
 native/haku_sr/build.log
+# your own test videos for tests\app-tests.ps1
+tests/media.local.ps1
