@@ -366,6 +366,87 @@ try {
         }
     }
 
+    # ---------- the anime model choice (Settings.UpscaleModel): AnimeJaNai or Adore ----------
+    $pack = Join-Path $env:LOCALAPPDATA "Haku Upscaler"
+    $adoreModel = Join-Path $pack "models\2x_Adore_renarchi_fp16.onnx"
+    $adoreEngine = Join-Path $pack "engines\2x_Adore_renarchi_fp16.max2560x1728.engine"
+    function MenuPress([string]$name) { if (-not (Find $name)) { Press 'Settings'; Start-Sleep 0.6 }; Press $name }
+    function TipFor([string]$pattern, [double]$seconds) { WaitFor { (AiTip) -match $pattern } $seconds }
+    $hasH264 = $Media.H264 -and (Test-Path -LiteralPath $Media.H264)
+
+    if (Want 'adore-first') {
+        # picking Adore the first time: downloaded, checked, prepared while the video plays on, then used.
+        # Your own Adore model and engine are moved aside for the test and put back after, never deleted.
+        if (-not $hasH264) { Skip 'adore-first' "missing file" } else {
+            $aside = @($adoreModel, $adoreEngine) | Where-Object { Test-Path -LiteralPath $_ }
+            foreach ($f in $aside) { Move-Item -LiteralPath $f "$f.test-aside" -Force }
+            try {
+                Start-Haku $Media.H264 @{ UpscaleModel = 'adore'; UpscaleTier = 'auto' } | Out-Null
+                # what the AI button says, every 2 s: the steps it went through (shown when it fails)
+                $seen = [System.Collections.Generic.List[string]]::new(); $t0 = Get-Date; $prep = -1; $on = -1; $playing = $false
+                while (((Get-Date) - $t0).TotalSeconds -lt 300 -and $on -lt 0) {
+                    $tip = ((AiTip) -split "`n")[0]; $secs = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
+                    if ($seen.Count -eq 0 -or $seen[$seen.Count - 1] -notlike "*$tip") { $seen.Add("$secs s: $tip | pause=$(Q 'pause')") }
+                    if ($prep -lt 0 -and $tip -match 'downloading and preparing Adore') { $prep = $secs }
+                    if ($prep -ge 0 -and -not $playing) { $playing = (Q 'pause') -eq 'no' }
+                    if ($tip -match 'on: Adore') { $on = $secs }
+                    Start-Sleep 2
+                }
+                $hash = if (Test-Path -LiteralPath $adoreModel) { (Get-FileHash -LiteralPath $adoreModel -Algorithm SHA256).Hash } else { "(none)" }
+                $ok = $prep -ge 0 -and $playing -and $on -ge 0 -and $hash -eq '79E007EDA5721CFA596945D5849320E2FAD67F8596F9AC31ED06CC8E3DDAF57D' -and (Test-Path -LiteralPath $adoreEngine)
+                Report 'adore-first' $ok ("said 'downloading and preparing' after $prep s, video playing meanwhile: $playing, Adore on after $on s, model checksum ok: $($hash -like '79E007ED*'), engine built: $(Test-Path -LiteralPath $adoreEngine)" + $(if (-not $ok) { " | steps: " + ($seen -join ' / ') } else { "" }))
+                Stop-Haku
+            }
+            finally {
+                foreach ($f in $aside) { if (Test-Path -LiteralPath "$f.test-aside") { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; Move-Item -LiteralPath "$f.test-aside" $f -Force } }
+            }
+        }
+    }
+
+    if (Want 'adore-switch') {
+        # changing model and tier in the player's menu while it plays: each change is used straight away and saved
+        if (-not $hasH264) { Skip 'adore-switch' "missing file" } else {
+            Start-Haku $Media.H264 @{ UpscaleModel = 'animejanai'; UpscaleTier = 'auto' } | Out-Null
+            $w = 0; WaitFor { ($script:w = QN 'width') -gt 0 } 20 | Out-Null
+            $steps = [ordered]@{}
+            $steps['start (AnimeJaNai, Auto)'] = TipFor 'on: Balanced' 30
+            MenuPress 'Model: Adore';      $steps['Model: Adore'] = TipFor 'on: Adore' 30
+            MenuPress 'Tier: Balanced';    $steps['Tier: Balanced'] = TipFor 'on: Balanced' 30
+            MenuPress 'Tier: Adore';       $steps['Tier: Adore'] = TipFor 'on: Adore' 30
+            MenuPress 'Model: AnimeJaNai'; $steps['Model: AnimeJaNai (tier Adore left over: Auto)'] = TipFor 'on: Balanced' 30
+            $upscaled = (QN 'video-out-params/w') -ge 2 * $w - 1
+            $saved = Get-Content (Join-Path $DataDir "settings.json") -Raw | ConvertFrom-Json
+            $ok = @($steps.Values | Where-Object { $_ -lt 0 }).Count -eq 0 -and $upscaled -and $saved.UpscaleModel -eq 'animejanai'
+            Report 'adore-switch' $ok ((($steps.GetEnumerator() | ForEach-Object { "$($_.Key) $($_.Value) s" }) -join '; ') + "; still upscaled: $upscaled; saved model: $($saved.UpscaleModel)")
+            Stop-Haku
+        }
+    }
+
+    if (Want 'adore-stale') {
+        # a tier saved for the other model (after switching back and forth) falls back to Auto instead of breaking
+        if (-not $hasH264) { Skip 'adore-stale' "missing file" } else {
+            Start-Haku $Media.H264 @{ UpscaleModel = 'animejanai'; UpscaleTier = 'adore' } | Out-Null
+            $a = TipFor 'on: Balanced' 30; $tipA = ((AiTip) -split "`n")[0]; Stop-Haku
+            Start-Haku $Media.H264 @{ UpscaleModel = 'adore'; UpscaleTier = 'quality' } | Out-Null
+            $b = TipFor 'on: Adore' 60; $tipB = ((AiTip) -split "`n")[0]; Stop-Haku
+            Report 'adore-stale' ($a -ge 0 -and $b -ge 0) "AnimeJaNai + tier 'adore': '$tipA'; Adore + tier 'quality': '$tipB'"
+        }
+    }
+
+    if (Want 'adore-settings') {
+        # the settings page follows the model: Adore's tiers and table row, AnimeJaNai's Quality and Look
+        Start-Haku $null @{ UpscaleModel = 'adore'; UpscaleTier = 'auto' } | Out-Null
+        WaitFor { Find 'App settings' } 20 | Out-Null
+        Press 'App settings'; Start-Sleep 1; Press 'Settings: AI upscaling'; Start-Sleep 1.5
+        $adoreChips = [bool](Find 'Speed and quality: Adore') -and -not (Find 'Speed and quality: Quality') -and [bool](Find 'Anime model: Adore')
+        $adoreNote = [bool](Find 'Adore by renarchi, made for 1080p anime: a little slower than Balanced. When your card can''t keep up with a video, AnimeJaNai''s faster tiers take over. Downloaded (3 MB) from renarchi''s GitHub the first time.')
+        Press 'Anime model: AnimeJaNai'; Start-Sleep 1.5
+        $janaiChips = [bool](Find 'Speed and quality: Quality') -and -not (Find 'Speed and quality: Adore')
+        $saved = (Get-Content (Join-Path $DataDir "settings.json") -Raw | ConvertFrom-Json).UpscaleModel
+        Report 'adore-settings' ($adoreChips -and $adoreNote -and $janaiChips -and $saved -eq 'animejanai') "Adore: its tiers shown $adoreChips, its note $adoreNote; switched to AnimeJaNai: its tiers shown $janaiChips, saved '$saved'"
+        Stop-Haku
+    }
+
     if (Want 'rename') {
         # a show renamed in the app: the library shows the new name, the folder on disk keeps its own
         $show = if ($Media.AnimeLibrary) { Get-ChildItem -LiteralPath $Media.AnimeLibrary -Directory -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -First 1 }

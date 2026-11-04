@@ -158,8 +158,11 @@ public partial class MainWindow
         if (!File.Exists(Upscaler.EngineFile(model)))
         {
             AiRelease(0); // play normally while the engine is built (seconds); the buffer comes back when it's added
-            controls?.SetUpscaleButton(true, false, $"AI upscaling: preparing {tier.Name} (once, about 15 seconds)");
-            controls?.SetAiLoading($"Preparing AI upscaling ({tier.Name})", sub: "Once for your graphics card, about 15 seconds. Playing meanwhile.");
+            // Adore is bigger: its engine takes about 1.5 minutes on a 4070, plus a 3 MB download the first time
+            string how = tier.Key == "adore" ? "a minute or two" : "about 15 seconds";
+            string doing = File.Exists(model) ? "Preparing" : "Downloading and preparing";
+            controls?.SetUpscaleButton(true, false, $"AI upscaling: {doing.ToLowerInvariant()} {tier.Name} (once, {how})");
+            controls?.SetAiLoading($"{doing} AI upscaling ({tier.Name})", sub: $"Once for your graphics card, {how}. Playing meanwhile.");
         }
         string? err = await Upscaler.Prepare(model);
         if (my != session || upscaleKey != key) return;

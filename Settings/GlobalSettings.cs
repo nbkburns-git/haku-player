@@ -439,7 +439,8 @@ public partial class MainWindow
                 if (SettingsLayer.IsVisible) BuildGlobalSettings();
             };
             p.Children.Add(prep);
-            Note("Each model is prepared for your graphics card once (about 15 seconds). Otherwise it happens the first time it's used.");
+            Note(S.UpscaleModel == "adore" ? "Each model is prepared for your graphics card once (about 15 seconds; Adore a minute or two, after a 3 MB download). Otherwise it happens the first time it's used."
+                : "Each model is prepared for your graphics card once (about 15 seconds). Otherwise it happens the first time it's used.");
         }
 
         Section(p, "When it runs");
