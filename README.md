@@ -18,17 +18,32 @@ and real-time AI upscaling to 4K on NVIDIA RTX cards.
 
 ---
 
-## Highlights
+## Core features
 
-- **Real-time AI upscaling** (NVIDIA RTX). Anime and cartoons are redrawn at twice the size with [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) models on TensorRT, live and all on the GPU, a second ahead of playback. Live-action TV shows and movies use NVIDIA's RTX Video Super Resolution instead. Subtitles and controls are drawn afterwards, so they stay sharp.
-- **Liquid glass everywhere.** The window uses Windows 11's acrylic, with slowly drifting colour glows behind it. In the player, a GPU shader blurs the *live video* under the controls every frame, Apple-style.
-- **Made for anime.** Japanese audio and full English subtitles by default (it skips "Signs & Songs" tracks). Official episode titles, and openings and endings as their own library, named the [AnimeThemes](https://animethemes.moe) way.
-- **Skip opening, skip ending, Up next.** Timings come from the file's chapters or from [AniSkip](https://aniskip.com) and [TheIntroDB](https://theintrodb.org). Failing that, Haku Player finds them itself by comparing the music of two episodes.
-- **Remembers what you've watched.** Watched ticks, progress bars, a *Continue watching* row and library stats.
-- **Your files, untouched.** It plays the originals at full quality through mpv (GPU decoding, no re-encoding) and never renames anything.
-- **Drop to play.** Drag a video or a folder onto the window, or onto `HakuPlayer.exe`, and it plays straight away. With the app already open, it plays in that window.
+### Real-time AI upscaling
 
-## Tour
+<img src="docs/images/ai-compare.png" alt="Cowboy Bebop, Rick and Morty and Band of Brothers: normal enlargement against AI upscaling, zoomed in" width="100%"/>
+
+1080p on a 4K screen, zoomed in: the normal enlargement on the left, Haku Player on the right. On an NVIDIA RTX card, anime (Cowboy Bebop) and cartoons (Rick and Morty) are redrawn at twice the size by [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) on TensorRT, live, all on the GPU, a second ahead of playback. Live action (Band of Brothers) uses NVIDIA's RTX Video, which sharpens real footage without the painted look an anime model gives it. Subtitles and controls are drawn afterwards, so they stay sharp.
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/ai-start.gif" alt="AI upscaling turned off and on again on Pluto"/></td>
+    <td width="50%"><img src="docs/images/ai-settings.png" alt="AI upscaling settings"/></td>
+  </tr>
+  <tr>
+    <td><b>One button</b> · the sparkle button (or <code>Ctrl+U</code>) turns it on or off. A loading panel shows while the AI fills a second of frames, then it plays; the badge shows what it's upscaling to. <i>(Pluto)</i></td>
+    <td><b>Its own settings page</b> · Auto, Fast, Balanced or Quality, a sharp or soft look, <i>Detect best for this PC</i>, and what TV shows and movies use. It shows each tier's speed on your card.</td>
+  </tr>
+</table>
+
+### A liquid-glass player
+
+<img src="docs/images/glass.gif" alt="Liquid glass controls over One Punch Man" width="100%"/>
+
+The controls float over the video in two glass pills. A GPU shader blurs, brightens and bends the *moving picture* underneath them every frame, Apple-style, and they fade away after a few seconds. The window itself uses Windows 11's acrylic, with slowly drifting colour glows. <i>(One Punch Man)</i>
+
+### Anime, TV shows and movies in one library
 
 <table>
   <tr>
@@ -36,33 +51,12 @@ and real-time AI upscaling to 4K on NVIDIA RTX cards.
     <td width="50%"><img src="docs/images/show.png" alt="Rick and Morty show page"/></td>
   </tr>
   <tr>
-    <td><b>Library</b> · covers, search, favourites, filters by genre or kind, sorting. Anime, TV shows and movies live together; openings and endings get their own section, with a <i>Random</i> shuffle.</td>
-    <td><b>Show pages</b> · details, banner and official episode names, fetched automatically. Watched ticks, progress bars, seasons, "What's missing" and "Wrong show info?" to fix a bad match.</td>
+    <td><b>Library</b> · covers, search, favourites, filters by genre or kind, sorting. Badly named folders still find the right show. Openings and endings get a library of their own, named the <a href="https://animethemes.moe">AnimeThemes</a> way.</td>
+    <td><b>Show pages</b> · details, banner and official episode names, fetched automatically. Seasons are merged, even from separate folders. Watched ticks, "What's missing" and "Wrong show info?".</td>
   </tr>
 </table>
 
-### AI upscaling
-
-<img src="docs/images/ai-compare.png" alt="Code Geass, Rick and Morty and Band of Brothers: normal enlargement against AI upscaling, zoomed in" width="100%"/>
-
-1080p on a 4K screen, zoomed in: the normal enlargement on the left, Haku Player on the right. Anime (Code Geass) and cartoons (Rick and Morty) use AnimeJaNai, so line art comes out crisp instead of soft. Live action (Band of Brothers) uses RTX Video, which sharpens real footage without the painted look an anime model gives it.
-
-<table>
-  <tr>
-    <td width="50%"><img src="docs/images/ai-start.gif" alt="AI upscaling starting"/></td>
-    <td width="50%"><img src="docs/images/ai-settings.png" alt="AI upscaling settings"/></td>
-  </tr>
-  <tr>
-    <td><b>One button</b> · the sparkle button (or <code>Ctrl+U</code>) turns it on or off. It pauses for a moment while the AI fills a second of frames ahead, then plays; the badge shows what it's upscaling to.</td>
-    <td><b>Its own settings page</b> · Auto, Fast, Balanced or Quality, a sharp or soft look, <i>Detect best for this PC</i>, and what TV shows and movies use. It shows each tier's speed on your card.</td>
-  </tr>
-</table>
-
-### The player
-
-<img src="docs/images/glass.gif" alt="Liquid glass controls fading over Band of Brothers" width="100%"/>
-
-The controls float over the video in two glass pills. They blur, brighten and bend the moving picture underneath, and fade away after a couple of seconds. Here on Band of Brothers, upscaled by RTX Video.
+### Skip opening and Up next
 
 <table>
   <tr>
@@ -70,31 +64,39 @@ The controls float over the video in two glass pills. They blur, brighten and be
     <td width="50%"><img src="docs/images/upnext.gif" alt="Up next countdown on Death Note"/></td>
   </tr>
   <tr>
-    <td><b>Skip opening / ending</b> · appears for the first 8 seconds, and again whenever the controls are up. Openings, endings and chapters are marked on the timeline.</td>
-    <td><b>Up next</b> · when the ending starts, the next episode plays after a 10-second countdown. <i>Play now</i> or <i>Cancel</i>.</td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/menu.gif" alt="Player quick settings on Rick and Morty"/></td>
-    <td><img src="docs/images/player.png" alt="Player controls on South Park"/></td>
-  </tr>
-  <tr>
-    <td><b>Quick settings</b> · audio and subtitle tracks, your own subtitle files with timing fixes, speed, AI upscaling tier and look, and per-kind language defaults.</td>
-    <td><b>The bar</b> · the timeline shows how far ahead the file is loaded (blue) and the frames the AI has ready (green), with exact-frame previews on hover. The badge shows the resolution and codec, and what the AI is upscaling to.</td>
+    <td><b>Skip opening / ending</b> · timings from the file's chapters, <a href="https://aniskip.com">AniSkip</a> or <a href="https://theintrodb.org">TheIntroDB</a>; failing that, Haku Player compares the music of two episodes to find them. <i>(Fullmetal Alchemist: Brotherhood)</i></td>
+    <td><b>Up next</b> · when the ending starts, the next episode plays after a 10-second countdown, AI and subtitles carrying on. <i>Play now</i> or <i>Cancel</i>. <i>(Death Note)</i></td>
   </tr>
 </table>
 
-### Settings and stats
+### Made for anime, good with everything
+
+- Japanese audio and full English subtitles by default for anime (it skips "Signs & Songs" tracks); English for TV and movies. Separate defaults for each.
+- Remembers what you've watched: watched ticks, progress bars and the *Continue watching* row on the home screen.
+- Plays your original files at full quality through mpv (GPU decoding, no re-encoding) and never renames anything.
+
+## More features
 
 <table>
   <tr>
-    <td width="50%"><img src="docs/images/settings.png" alt="Appearance settings"/></td>
-    <td width="50%"><img src="docs/images/stats.png" alt="Library stats"/></td>
+    <td width="25%"><img src="docs/images/menu.gif" alt="Player quick settings on Rick and Morty"/></td>
+    <td width="25%"><img src="docs/images/player.png" alt="Player controls on South Park"/></td>
+    <td width="25%"><img src="docs/images/settings.png" alt="Appearance settings"/></td>
+    <td width="25%"><img src="docs/images/stats.png" alt="Library stats"/></td>
   </tr>
   <tr>
-    <td><b>Make it yours</b> · five accent themes or a colour of your own (the logo follows it), glass clarity and background motion. Separate language defaults for anime and for TV and movies, several library folders, and Discord status.</td>
-    <td><b>Stats</b> · library size and running time, time watched, a 14-day chart and your most-watched shows.</td>
+    <td><sub><b>Quick settings</b> · tracks, your own subtitle files, speed, AI tier and look.</sub></td>
+    <td><sub><b>The bar</b> · loaded (blue) and AI-ready (green) on the timeline, frame previews on hover.</sub></td>
+    <td><sub><b>Themes</b> · five accents or your own colour, glass clarity, motion.</sub></td>
+    <td><sub><b>Stats</b> · library size, running time, time watched, a 14-day chart.</sub></td>
   </tr>
 </table>
+
+- **Drop to play:** drag a video or folder onto the window or onto `HakuPlayer.exe`.
+- **Pop-out player:** a small always-on-top window in the corner, shaped to the video.
+- **Discord status:** "Watching" with the show and time left (optional).
+- **Timeline previews:** exact frames, decoded on the GPU and cached.
+- **Fill to screen** for near-16:9 screens, exact seeks in under a fifth of a second, and a debug panel.
 
 ## All features
 
@@ -142,7 +144,7 @@ The controls float over the video in two glass pills. They blur, brighten and be
 - An episode counts as watched once you reach its ending (or 90% of the way in). Tick or untick by hand, per episode, season or show.
 - *Continue watching* row on the home screen: every show you're part-way through, or onto the next episode of. Close a card to hide it until you next watch that show.
 - Stats: library size and running time, time watched (total and this week), a 14-day chart and most-watched shows.
-- Discord status, *"Watching Haku Player · Code Geass · S01E05"* with time left. Optional, and needs your own Discord application ID.
+- Discord status, *"Watching Haku Player · Cowboy Bebop · S01E05"* with time left. Optional, and needs your own Discord application ID.
 </details>
 
 ## Requirements
@@ -180,12 +182,12 @@ Then open **Settings → Library → Add library** and choose your folders.
 ```text
 Anime library\                 ← marked "Anime"
 ├─ Anime Shows\
-│  └─ Code Geass\
+│  └─ Cowboy Bebop\
 │     ├─ cover.png              (optional; downloaded if missing)
-│     └─ Season 1\S01E01 - The Day a New Demon Was Born.mkv
+│     └─ Season 1\S01E01 - Asteroid Blues.mkv
 └─ Anime Openings\
-   └─ Code Geass\
-      └─ CodeGeass-OP1.webm     (AnimeThemes names: Show-OP1, Show-ED2…)
+   └─ Cowboy Bebop\
+      └─ CowboyBebop-OP1.webm     (AnimeThemes names: Show-OP1, Show-ED2…)
 
 TV Shows\                      ← marked "TV shows"
 ├─ The Sopranos (1999)\S01E01 - Pilot.mkv
