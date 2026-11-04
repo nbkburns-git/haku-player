@@ -85,7 +85,7 @@ public partial class MainWindow
 
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 16, 0) };
         text.Children.Add(new TextBlock { Text = started ? "CONTINUE WATCHING" : "UP NEXT", FontSize = 12, FontWeight = FontWeights.Bold, Foreground = (Brush)FindResource("Accent") });
-        text.Children.Add(new TextBlock { Text = e.Name, FontSize = single ? 32 : 26, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 4, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
+        text.Children.Add(new TextBlock { Text = e.Title, FontSize = single ? 32 : 26, FontWeight = FontWeights.Bold, Margin = new Thickness(0, 4, 0, 0), TextTrimming = TextTrimming.CharacterEllipsis });
         text.Children.Add(new TextBlock { Text = e.Kind == "movie" ? v.Title : v.Label, FontSize = 16, Opacity = 0.8, Margin = new Thickness(0, 2, 0, 12), TextTrimming = TextTrimming.CharacterEllipsis });
         var progress = new StackPanel { Orientation = Orientation.Horizontal };
         double frac = started && rec!.Dur > 0 ? Math.Clamp(rec.Pos / rec.Dur, 0, 1) : 0;
@@ -107,7 +107,7 @@ public partial class MainWindow
             Template = (ControlTemplate)FindResource("CloseDotTemplate"), Content = new TextBlock { Text = "", FontFamily = new FontFamily("Segoe Fluent Icons, Segoe MDL2 Assets"), FontSize = 11 }, Width = 30, Height = 30, Focusable = false, Cursor = Cursors.Hand, Foreground = (Brush)FindResource("Text"),
             HorizontalAlignment = HorizontalAlignment.Right, VerticalAlignment = VerticalAlignment.Top, Margin = new Thickness(0, 12, 14, 0), ToolTip = "Remove from Continue watching",
         };
-        System.Windows.Automation.AutomationProperties.SetName(close, $"Remove {e.Name} from Continue watching");
+        System.Windows.Automation.AutomationProperties.SetName(close, $"Remove {e.Title} from Continue watching");
         close.Click += (_, a) =>
         {
             a.Handled = true; // not a click on the card
@@ -130,8 +130,9 @@ public partial class MainWindow
         }
         else card.Width = 600;
         singleCard = single ? card : null;
-        System.Windows.Automation.AutomationProperties.SetName(card, $"Continue watching {e.Name}");
+        System.Windows.Automation.AutomationProperties.SetName(card, $"Continue watching {e.Title}");
         card.Click += (_, _) => { returnTo = Home; Play(e, index); }; // mpv's resume point takes it to where you left off
+        card.MouseRightButtonUp += (_, ev) => { ShowCardMenu(e); ev.Handled = true; };
         return card;
     }
 

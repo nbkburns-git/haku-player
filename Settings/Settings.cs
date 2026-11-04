@@ -66,6 +66,7 @@ public sealed class Settings
     public bool TvSubtitles { get; set; }             // off: most live-action is in your language already
     public int SettingsVersion { get; set; }          // for one-time upgrades of older settings files
     public double SubScale { get; set; } = 1.0;
+    public double SubPos { get; set; } = 100;         // mpv sub-pos: 100 = the usual place at the bottom, lower = higher up (drag them on the video)
     public double HideAfter { get; set; } = 2;        // seconds before the controls fade
     public bool Previews { get; set; } = true;        // timeline hover thumbnails
     public bool Debug { get; set; }                   // live playback details over the video
@@ -95,6 +96,7 @@ public sealed class Settings
     public Dictionary<string, double> SubDelays { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     public Dictionary<string, int> InfoOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase); // folder -> AniList id you picked
+    public Dictionary<string, string> Renames { get; set; } = new(StringComparer.OrdinalIgnoreCase); // folder -> the name you gave it (in the app only; the folder keeps its name)
     public Dictionary<string, string> MediaOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase); // TV/movie folder -> IMDb id you picked
     public LastWatch? LastWatched { get; set; }       // home page "Continue watching" (shows only)
 

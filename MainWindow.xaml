@@ -55,7 +55,7 @@
                 <GradientStop Color="#1A1C26" Offset="1"/>
               </LinearGradientBrush>
             </Border.Background>
-            <TextBlock Text="{Binding Name}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center"
+            <TextBlock Text="{Binding Title}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center"
                        Margin="16" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
           </Border>
           <Border CornerRadius="18">
@@ -91,7 +91,7 @@
             </Grid>
           </Button>
         </Grid>
-        <TextBlock Text="{Binding Name}" Margin="6,14,6,0" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+        <TextBlock Text="{Binding Title}" Margin="6,14,6,0" FontSize="16" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
         <TextBlock Text="{Binding Converter={StaticResource Watch}}" Margin="6,3,6,0" FontSize="13" Foreground="{StaticResource Muted}" TextTrimming="CharacterEllipsis"/>
       </StackPanel>
       <ControlTemplate.Triggers>
@@ -130,7 +130,7 @@
     </ControlTemplate>
 
     <DataTemplate x:Key="Card">
-      <Button Template="{StaticResource CardTemplate}" Click="OnCard" Margin="16,16,16,22" Cursor="Hand" Focusable="False" Foreground="{StaticResource Text}" AutomationProperties.Name="{Binding Name}"/>
+      <Button Template="{StaticResource CardTemplate}" Click="OnCard" MouseRightButtonUp="OnCardMenu" Margin="16,16,16,22" Cursor="Hand" Focusable="False" Foreground="{StaticResource Text}" AutomationProperties.Name="{Binding Title}"/>
     </DataTemplate>
 
     <!-- Home panels: rounded glass edge; content is clipped to the corners in code; hover lifts it a touch -->
@@ -325,7 +325,7 @@
                         <GradientStop Color="#1A1C26" Offset="1"/>
                       </LinearGradientBrush>
                     </Border.Background>
-                    <TextBlock Text="{Binding Name}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center" Margin="24" FontSize="34" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
+                    <TextBlock Text="{Binding Title}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center" Margin="24" FontSize="34" FontWeight="SemiBold" Foreground="{StaticResource Muted}"/>
                   </Border>
                   <Border CornerRadius="26" BorderThickness="1" BorderBrush="{StaticResource GlassStroke}">
                     <Border.Background><ImageBrush ImageSource="{Binding Cover}" Stretch="UniformToFill"/></Border.Background>
@@ -347,7 +347,7 @@
                     <TextBlock Text="Wrong show info?" FontSize="13.5" VerticalAlignment="Center"/>
                   </StackPanel>
                 </Button>
-                <TextBlock Text="{Binding Name}" FontSize="48" FontWeight="Bold" TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="{Binding Title}" FontSize="48" FontWeight="Bold" TextTrimming="CharacterEllipsis" Background="Transparent" MouseRightButtonUp="OnDetailMenu" ToolTip="Right-click to rename, mark watched and more"/>
               </DockPanel>
               <TextBlock x:Name="DetailAlt" DockPanel.Dock="Top" FontSize="17" Foreground="#C8CCD6" Margin="2,4,0,0" TextTrimming="CharacterEllipsis"/>
               <WrapPanel x:Name="DetailGenres" DockPanel.Dock="Top" Margin="0,14,0,0"/>

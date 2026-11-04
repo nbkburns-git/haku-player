@@ -39,6 +39,8 @@ public record Entry(string Name, ImageSource? Cover, List<Video> Videos, string 
 {
     // cache key for details: anime keeps its plain name (shared by a show and its openings)
     public string InfoKey => Kind == "anime" ? Name : $"{Kind}-{Name}";
+    // what the app shows: your own name for it if you renamed it (Name stays the folder's, for matching and caches)
+    public string Title => Folder.Length > 0 && Settings.Current.Renames.TryGetValue(Folder, out var t) && t.Length > 0 ? t : Name;
     public string Count => IsRandom ? (Videos.Count == 1 ? $"Play the 1 {Unit.TrimEnd('s')}" : $"Shuffle all {Videos.Count} {Unit}") : $"{Videos.Count} {(Videos.Count == 1 ? Unit.TrimEnd('s') : Unit)}";
 }
 
@@ -115,6 +117,7 @@ public partial class MainWindow : Window
         // The video is part of this window: it drives the bar, cursor and clicks. (Resize edges come from WindowChrome.)
         VideoHost.MouseMove += (_, e) =>
         {
+            SubDragMove(e.GetPosition(VideoHost).Y);
             var p = System.Windows.Forms.Cursor.Position;
             if (p == lastMouse) return; // Windows re-sends moves when windows change under a still cursor
             lastMouse = p;
@@ -130,11 +133,60 @@ public partial class MainWindow : Window
                 Send(new object[] { "cycle", "fullscreen" });
                 return;
             }
-            if (controls?.CloseMenu() == true) { menuJustClosed = true; return; }
-            menuJustClosed = false;
-            Send(new object[] { "cycle", "pause" });
+            // pressed on the subtitles: they may be dragged, so the click's pause waits for the release
+            if (subShowing && OnSubtitles(e.GetPosition(VideoHost).Y) && controls?.MenuOpen != true)
+            {
+                subDragFrom = e.GetPosition(VideoHost).Y; subDragStart = Settings.Current.SubPos; subDragged = false;
+                VideoHost.CaptureMouse();
+                return;
+            }
+            ClickVideo();
+        };
+        VideoHost.MouseLeftButtonUp += (_, e) =>
+        {
+            if (subDragFrom == null) return;
+            subDragFrom = null;
+            VideoHost.ReleaseMouseCapture();
+            if (!subDragged) { ClickVideo(); return; }
+            Settings.Current.Save();
+            Toast(Settings.Current.SubPos >= 99.5 ? "Subtitles back in their usual place" : "Subtitles stay here for every video · Reset in the player menu");
         };
         VideoHost.SizeChanged += (_, _) => SizeVideo();
+    }
+
+    void ClickVideo()
+    {
+        if (controls?.CloseMenu() == true) { menuJustClosed = true; return; }
+        menuJustClosed = false;
+        Send(new object[] { "cycle", "pause" });
+    }
+
+    // ---------- moving the subtitles: drag them up or down on the video (mpv's sub-pos, kept in Settings.SubPos) ----------
+    bool subShowing, barsShown = true, subDragged;
+    double? subDragFrom;
+    double subDragStart;
+
+    // roughly where the subtitle lines are: sub-pos is the bottom of the text as a % of the height; two lines above it
+    bool OnSubtitles(double y)
+    {
+        double h = VideoHost.ActualHeight, line = h * Settings.Current.SubPos / 100;
+        return h > 0 && y > line - h * 0.2 && y < line + h * 0.03;
+    }
+
+    void SubDragMove(double y)
+    {
+        if (subDragFrom is double from)
+        {
+            if (!subDragged && Math.Abs(y - from) < 4) return; // a click, not a drag (yet)
+            subDragged = true;
+            double pos = Math.Clamp(subDragStart + (y - from) / Math.Max(1, VideoHost.ActualHeight) * 100, 8, 100);
+            if (pos > 98.5) pos = 100; // snaps home
+            Settings.Current.SubPos = Math.Round(pos, 1);
+            Send(new object[] { "set_property", "sub-pos", Settings.Current.SubPos });
+            return;
+        }
+        // a hint that they can be moved: the up/down cursor over them while the bars are up
+        if (barsShown) VideoHost.Cursor = subShowing && OnSubtitles(y) ? Cursors.SizeNS : null;
     }
 
     // mpv draws at the video area's real pixel size, in the same layout pass
@@ -785,6 +837,11 @@ public partial class MainWindow : Window
             Play(entry with { Name = "Random", Videos = shuffled }, 0);
             return;
         }
+        OpenShow(entry);
+    }
+
+    void OpenShow(Entry entry)
+    {
         Detail.DataContext = entry;
         ShowEpisodes(entry, null);
         DetailStar.Content = IsFav(entry) ? "\uE735" : "\uE734";
@@ -1241,6 +1298,7 @@ public partial class MainWindow : Window
             $"--slang={Settings.Langs(Settings.Current.LangFor(entry.Kind).Subs)}",
             $"--sid={(Settings.Current.LangFor(entry.Kind).On ? "auto" : "no")}",
             $"--sub-scale={Settings.Current.SubScale.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
+            $"--sub-pos={Settings.Current.SubPos.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
             "--title=Haku Player",               // name shown in the Windows volume mixer
             "--audio-client-name=Haku Player",
             $"--glsl-shaders={GlassShader}",     // real-time liquid glass under the player bars
@@ -1277,13 +1335,14 @@ public partial class MainWindow : Window
                 CloseApp = Close,
                 DragWindow = DragFromOverlay,
             };
-            controls.SetTitle(entry.Name);
+            controls.SetTitle(entry.Title);
             controls.SetUpscaleButton(Settings.Current.Upscale, false, Settings.Current.Upscale ? "AI upscaling: waiting for the video (Ctrl+U)" : "AI upscaling: off (Ctrl+U)");
             controls.SetMaximized(WindowState == WindowState.Maximized);
             controls.SetFullscreen(fullscreen);
             // new bars start shown without raising ShownChanged, so clear a hidden cursor left by the last video
             VideoHost.Cursor = null;
-            controls.ShownChanged += on => VideoHost.Cursor = on ? null : Cursors.None;
+            controls.ShownChanged += on => { barsShown = on; VideoHost.Cursor = on ? null : Cursors.None; };
+            barsShown = true; subShowing = false;
             Player.Children.Add(controls); // over the video
             PlaceControls();
         }
@@ -1305,7 +1364,7 @@ public partial class MainWindow : Window
             var r = new StreamReader(c);
             ipc = w;
             await w.WriteLineAsync("""{"command":["observe_property",1,"fullscreen"]}""");
-            foreach (var prop in new[] { "playlist-pos", "pause", "time-pos", "duration", "volume", "mute", "video-params/aspect", "speed", "track-list", "height", "width", "container-fps", "frame-drop-count", "video-format", "sub-delay", "chapter-list", "demuxer-cache-time" })
+            foreach (var prop in new[] { "playlist-pos", "pause", "time-pos", "duration", "volume", "mute", "video-params/aspect", "speed", "track-list", "height", "width", "container-fps", "frame-drop-count", "video-format", "sub-delay", "chapter-list", "demuxer-cache-time", "sub-text" })
                 await w.WriteLineAsync($$"""{"command":["observe_property",2,"{{prop}}"]}""");
             string? line;
             while ((line = await r.ReadLineAsync()) != null)
@@ -1329,7 +1388,7 @@ public partial class MainWindow : Window
                         SetFullscreen(d.ValueKind == JsonValueKind.True);
                         break;
                     case "playlist-pos" when d.ValueKind == JsonValueKind.Number && d.GetInt32() is var pos && pos >= 0 && pos < entry.Videos.Count:
-                        controls?.SetTitle($"{entry.Name}  ·  {entry.Videos[pos].Label}");
+                        controls?.SetTitle($"{entry.Title}  ·  {entry.Videos[pos].Label}");
                         controls?.SetFile(entry.Videos[pos].Path);
                         if (controls != null) controls.NextTitle = entry.Unit != "themes" && pos + 1 < entry.Videos.Count ? entry.Videos[pos + 1].Label : null;
                         playingIndex = pos;
@@ -1378,6 +1437,9 @@ public partial class MainWindow : Window
                     case "width" when d.ValueKind == JsonValueKind.Number:
                         videoWidth = d.GetInt32();
                         UpdateUpscale(my);
+                        break;
+                    case "sub-text":
+                        subShowing = d.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(d.GetString());
                         break;
                     case "demuxer-cache-time" when d.ValueKind == JsonValueKind.Number:
                         controls?.SetCache(d.GetDouble());

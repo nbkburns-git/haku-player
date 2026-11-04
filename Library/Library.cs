@@ -85,7 +85,7 @@ public partial class MainWindow
         {
             "new" => items.OrderByDescending(x => x.IsRandom).ThenByDescending(x => SafeTime(x.Folder)),
             "top" => items.OrderByDescending(x => x.IsRandom).ThenByDescending(x => InfoService.Cached(x.InfoKey)?.Score ?? -1),
-            _ => items,
+            _ => items.OrderByDescending(x => x.IsRandom).ThenBy(x => x.Title, Natural.I),
         };
         Cards.ItemsSource = items.ToList();
         BuildFilterBar();
@@ -94,7 +94,7 @@ public partial class MainWindow
     static bool Matches(Entry x, string q)
     {
         var info = InfoService.Cached(x.InfoKey);
-        return x.Name.Contains(q, StringComparison.OrdinalIgnoreCase)
+        return x.Name.Contains(q, StringComparison.OrdinalIgnoreCase) || x.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
             || (info?.Title?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
             || (info?.Native?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
             || x.Videos.Any(v => v.Title.Contains(q, StringComparison.OrdinalIgnoreCase));

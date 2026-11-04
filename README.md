@@ -92,6 +92,8 @@ The controls float over the video in two glass pills. A GPU shader blurs, bright
   </tr>
 </table>
 
+- **Right-click a show** to rename it (in the app only), mark it watched, fix its details or open its folder.
+- **Move the subtitles:** drag them up or down on the video.
 - **Drop to play:** drag a video or folder onto the window or onto `HakuPlayer.exe`.
 - **Pop-out player:** a small always-on-top window in the corner, shaped to the video.
 - **Discord status:** "Watching" with the show and time left (optional).
@@ -110,6 +112,7 @@ The controls float over the video in two glass pills. A GPU shader blurs, bright
 - Missing covers are downloaded. Anime covers are saved as `cover.jpg` in the show folder; TV and movie covers go in the app's own data folder.
 - Official episode names (shown in the app only), a season picker, and *What's missing* (episodes you don't have yet).
 - Search across shows, alternative titles and episodes. Favourites, genre and kind filters, sorted A–Z, by newest or by top rated.
+- Right-click a show (library card, *Continue watching* card or its page's title): Play or Resume, Rename, Favourite, Mark all watched, *Wrong show info?*, Show in File Explorer. Rename only changes the name in the app; the folder on disk keeps its own.
 </details>
 
 <details>
@@ -120,6 +123,7 @@ The controls float over the video in two glass pills. A GPU shader blurs, bright
 - Timeline: exact-frame hover previews, chapter ticks, opening and ending marked. Previews decode outward from where you hover, on the GPU (CUDA) with a CPU fallback, and are cached.
 - Skip opening, ending and recap (optionally automatic), an Up next countdown and Autoplay.
 - Audio and subtitle menu that prefers full subtitles over signs-only. Add your own subtitle files and shift their timing; both are remembered per video.
+- Drag the subtitles up or down on the video to put them where you like (the cursor shows when you're over them); the spot is kept for every video, and *Position* in the menu puts them back.
 - Speed, volume (wheel works anywhere), fill-to-screen for near-16:9 screens, fullscreen, and a pop-out player that stays on top. Exact seeks land in under a fifth of a second, even with AI upscaling on.
 - The window keeps the video's shape when you resize it. Keyboard shortcuts are mpv's (space, arrows, `f`, `m`, `j`, `z`/`x`…).
 - Debug panel: codec, colour, decoder, frame rate, dropped frames, A/V sync and bitrate.
@@ -211,7 +215,7 @@ powershell -ExecutionPolicy Bypass -File tests\app-tests.ps1      # the app, end
 The app tests build a test copy with its own data folder (your settings and history aren't touched) and drive it through
 mpv's pipe and UI Automation: the AI start-up buffer, exact seeks, pausing, the AI button, turning it on while paused, a
 10-bit 30 fps video (no frame drops, no green edge), a 4K file, subtitle choice, the next episode, your own subtitle files,
-RTX Video on a live-action show and the anime model on a cartoon, leaving the player mid-start, show-detail matching, the
+RTX Video on a live-action show and the anime model on a cartoon, leaving the player mid-start, show-detail matching, renaming a show, the
 window staying on its monitor, and no UI stalls or "not responding" anywhere. Put your own test videos in
 `tests\media.local.ps1` (git-ignored; the keys are listed in `tests\app-tests.ps1`). Test windows can go on another
 monitor and never take focus: set `$TestWindow = "x,y,w,h"` there, in screen pixels.

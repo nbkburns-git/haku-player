@@ -136,7 +136,7 @@ public partial class MainWindow
         p.Children.Add(chart);
 
         // most watched: time spent per show
-        var byShow = shows.Select(e => (e.Name, Secs: e.Videos.Sum(v => Watch.Get(v.Path)?.Seconds ?? 0))).Where(x => x.Secs > 60).OrderByDescending(x => x.Secs).Take(5).ToList();
+        var byShow = shows.Select(e => (Name: e.Title, Secs: e.Videos.Sum(v => Watch.Get(v.Path)?.Seconds ?? 0))).Where(x => x.Secs > 60).OrderByDescending(x => x.Secs).Take(5).ToList();
         if (byShow.Count > 0)
         {
             Section(p, "Most watched");

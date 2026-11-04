@@ -349,6 +349,19 @@ try {
             Stop-Haku
         }
     }
+
+    if (Want 'rename') {
+        # a show renamed in the app: the library shows the new name, the folder on disk keeps its own
+        $show = if ($Media.AnimeLibrary) { Get-ChildItem -LiteralPath $Media.AnimeLibrary -Directory -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -First 1 }
+        if (-not $show) { Skip 'rename' "missing library" } else {
+            Start-Haku $null @{ Libs = @(@{ Id = 't'; Name = 'Anime'; Folders = @(@{ Path = $Media.AnimeLibrary; Kind = 'anime' }); Home = $true }); Renames = @{ $show.FullName = 'Renamed By Test' } } | Out-Null
+            WaitFor { Find 'Anime' } 20 | Out-Null
+            Press 'Anime'
+            $shown = WaitFor { Find 'Renamed By Test' } 10
+            Report 'rename' ($shown -ge 0 -and (Test-Path -LiteralPath $show.FullName)) "'$($show.Name)' shows as 'Renamed By Test' after $shown s; folder still '$($show.Name)': $(Test-Path -LiteralPath $show.FullName)"
+            Stop-Haku
+        }
+    }
 }
 finally { Stop-Haku }
 

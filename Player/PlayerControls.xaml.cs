@@ -606,6 +606,8 @@ public partial class PlayerControls : UserControl
         Activity();
     }
 
+    public bool MenuOpen => openMenu != null;
+
     // Returns true if a menu was open (so a click on the video only closes it).
     public bool CloseMenu()
     {
@@ -818,6 +820,12 @@ public partial class PlayerControls : UserControl
         {
             S.SubScale = scale;
             Send(new object[] { "set_property", "sub-scale", scale });
+        }));
+        // or drag them up and down on the video; a dragged spot lights neither chip
+        Chips("Position (or drag them)", new[] { (100.0, "Bottom"), (85.0, "Higher") }, S.SubPos, pos => Change(() =>
+        {
+            S.SubPos = pos;
+            Send(new object[] { "set_property", "sub-pos", pos });
         }));
 
         Header("Controls");
