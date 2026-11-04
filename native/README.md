@@ -14,6 +14,7 @@ haku_sr.dll
 nvinfer_11.dll  nvonnxparser_11.dll  nvinfer_plugin_11.dll
 nvinfer_builder_resource_{ptx,sm86,sm89,sm120}_11.dll   (engine building for RTX 30/40/50)
 models\2x_AnimeJaNai_HD_V3[Sharp1]_{SuperUltraCompact,UltraCompact,Compact}_fp16.onnx
+models\2x_Adore_renarchi_fp16.onnx   (optional: Haku downloads it from renarchi's release when you pick Adore)
 engines\<model>.max2560x1728.engine  (built on first use, about 15 s; one per model, any size up to 2560x1728)
 ```
 

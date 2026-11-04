@@ -350,6 +350,22 @@ try {
         }
     }
 
+    if (Want 'adore') {
+        # the Adore model, picked by hand: downloaded and prepared the first time, then it has to keep up with 1080p
+        if (-not (($Media.H264 -and (Test-Path -LiteralPath $Media.H264)))) { Skip 'adore' "missing file" } else {
+            Start-Haku $Media.H264 @{ UpscaleModel = 'adore'; UpscaleTier = 'adore' } | Out-Null
+            $w = 0; WaitFor { ($script:w = QN 'width') -gt 0 } 20 | Out-Null
+            $took = WaitFor { (QN 'video-out-params/w') -ge 2 * $w - 1 -and (AiTip) -match 'Adore' } 240
+            Start-Sleep 3
+            $watch = Watch 20
+            # it must work everywhere; keeping up is the GPU's business (a 4070 has ~8% to spare at 1080p film, less if
+            # something else uses the GPU), so that part is reported, not judged
+            $kept = (AiTip) -match 'on: Adore'
+            Report 'adore' ($took -ge 0) "on after $took s (first time: download + engine); kept up for 20 s: $kept ($($watch.Drops) drops, buffer never below $($watch.MinReady)/$($watch.Cap)); '$(((AiTip) -split "`n")[0])'"
+            Stop-Haku
+        }
+    }
+
     if (Want 'rename') {
         # a show renamed in the app: the library shows the new name, the folder on disk keeps its own
         $show = if ($Media.AnimeLibrary) { Get-ChildItem -LiteralPath $Media.AnimeLibrary -Directory -ErrorAction SilentlyContinue | Sort-Object Name | Select-Object -First 1 }

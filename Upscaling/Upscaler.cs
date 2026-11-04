@@ -23,15 +23,22 @@ static class Upscaler
 
     // Tiers, fastest first. fps: measured on an RTX 4070 through the whole pipeline, 1920x1080 -> 3840x2160 (FP16, size-range engine).
     public record Tier(string Key, string Name, string Size, double Fps4070);
-    public static readonly Tier[] Tiers =
+    internal static readonly Tier[] AnimeJaNai =
     {
         new("fast", "Fast", "SuperUltraCompact", 89.3),
         new("balanced", "Balanced", "UltraCompact", 31.6),
         new("quality", "Quality", "Compact", 17.2),
     };
+    // Adore (renarchi, made for 1080p anime) is one model: when it can't keep up with a video, AnimeJaNai's faster tiers take over
+    internal static readonly Tier[] Adore = { AnimeJaNai[0], AnimeJaNai[1], new("adore", "Adore", "Adore", 26.0) };
+    public static Tier[] Tiers => Settings.Current.UpscaleModel == "adore" ? Adore : AnimeJaNai;
 
-    public static string ModelFile(Tier t, string look) =>
-        Path.Combine(Models, $"2x_AnimeJaNai_HD_V3{(look == "soft" ? "" : "Sharp1")}_{t.Size}_fp16.onnx");
+    const string AdoreFile = "2x_Adore_renarchi_fp16.onnx";
+    const string AdoreUrl = "https://github.com/renarchi/Re-SISR/releases/download/Adore/2x_Adore_renarchi_fp16.onnx";
+    const string AdoreSha256 = "79E007EDA5721CFA596945D5849320E2FAD67F8596F9AC31ED06CC8E3DDAF57D";
+
+    public static string ModelFile(Tier t, string look) => t.Key == "adore" ? Path.Combine(Models, AdoreFile)
+        : Path.Combine(Models, $"2x_AnimeJaNai_HD_V3{(look == "soft" ? "" : "Sharp1")}_{t.Size}_fp16.onnx");
 
     // One engine per model: it takes any video up to MaxW x MaxH (haku_sr.h HSR_MAX_W/H).
     public const int MaxW = 2560, MaxH = 1728;
@@ -108,17 +115,19 @@ static class Upscaler
     }
 
     // The best tier that keeps up with this video (15% headroom), or null if none would.
-    public static Tier? Auto(int w, int h, double fps) => Speed <= 0 ? null : Pick(w, h, fps, Fps1080);
+    public static Tier? Auto(int w, int h, double fps) => Speed <= 0 ? null : Pick(w, h, fps, Fps1080, Tiers);
 
-    internal static Tier? AutoFor(int w, int h, double fps, double speed) => speed <= 0 ? null : Pick(w, h, fps, t => t.Fps4070 * speed);
+    internal static Tier? AutoFor(int w, int h, double fps, double speed, Tier[] tiers) => speed <= 0 ? null : Pick(w, h, fps, t => t.Fps4070 * speed, tiers);
 
-    static Tier? Pick(int w, int h, double fps, Func<Tier, double> fps1080)
+    static Tier? Pick(int w, int h, double fps, Func<Tier, double> fps1080, Tier[] tiers)
     {
         double pixels = (double)w * h / (1920.0 * 1080.0);
-        double need = Math.Max(fps, 23.976) * 1.15;
+        double need = Math.Max(fps, 23.976);
         Tier? best = null;
-        foreach (var t in Tiers)
-            if (fps1080(t) / pixels >= need) best = t;
+        // 15% headroom; Adore, a model you picked on purpose, gets 5% (it plays 1080p film with no drops on a 4070),
+        // since the step-down takes over if a video still can't keep up
+        foreach (var t in tiers)
+            if (fps1080(t) / pixels >= need * (t.Key == "adore" ? 1.05 : 1.15)) best = t;
         return best;
     }
 
@@ -204,7 +213,8 @@ static class Upscaler
             measured[t.Key] = Math.Round(fps, 1);
         }
         var s = Settings.Current;
-        s.UpscaleMeasured = measured;
+        if (s.UpscaleMeasuredGpu != Gpu) s.UpscaleMeasured = new();
+        foreach (var (k, v) in measured) s.UpscaleMeasured[k] = v; // keeps the other model's speeds
         s.UpscaleMeasuredGpu = Gpu;
         s.Save();
         return null;
@@ -218,10 +228,11 @@ static class Upscaler
         lock (building)
         {
             if (building.TryGetValue(engine, out var running)) return running;
-            var t = Task.Run(() =>
+            var t = Task.Run(async () =>
             {
                 try
                 {
+                    if (!File.Exists(model) && Path.GetFileName(model) == AdoreFile && await DownloadAdore(model) is string derr) return derr;
                     if (!File.Exists(model)) return $"model missing: {Path.GetFileName(model)}";
                     LoadLib();
                     Directory.CreateDirectory(Engines);
@@ -233,6 +244,22 @@ static class Upscaler
             building[engine] = t;
             return t;
         }
+    }
+
+    // Adore isn't in the Haku Upscaler pack: fetched from its author's release the first time, and only kept if it's that exact file
+    static async Task<string?> DownloadAdore(string model)
+    {
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromMinutes(2) };
+            var bytes = await http.GetByteArrayAsync(AdoreUrl);
+            if (Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)) != AdoreSha256) return "the Adore download wasn't the expected file";
+            Directory.CreateDirectory(Models);
+            await File.WriteAllBytesAsync(model + ".part", bytes);
+            File.Move(model + ".part", model, true);
+            return null;
+        }
+        catch (Exception ex) { return $"couldn't download Adore ({ex.Message})"; }
     }
 
     // ---------- mpv ----------

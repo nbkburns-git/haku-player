@@ -110,11 +110,11 @@ bool load_trt(bool need_builder)
             if (n > 0 && n < MAX_PATH)
                 dir = std::wstring(local, n) + L"\\Haku Upscaler\\";
         }
-        // nvinfer finds its builder resources and cudart next to itself
+        // nvinfer finds cudart next to itself, and its builder resources (nvinfer_builder_resource_*) too, but those load
+        // only when a builder is made: so the folder stays in the search path (reset, building an engine in Haku failed)
         SetDllDirectoryW(dir.c_str());
         HMODULE infer = LoadLibraryExW((dir + L"nvinfer_11.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
         HMODULE onnx = LoadLibraryExW((dir + L"nvonnxparser_11.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-        SetDllDirectoryW(nullptr);
         if (infer) {
             g_create_runtime = (create_fn)GetProcAddress(infer, "createInferRuntime_INTERNAL");
             g_create_builder = (create_fn)GetProcAddress(infer, "createInferBuilder_INTERNAL");

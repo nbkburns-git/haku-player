@@ -135,6 +135,7 @@ The controls float over the video in two glass pills. A GPU shader blurs, bright
 - Real-time 2× AI upscaling with [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) V3 models on NVIDIA TensorRT, in a filter built into Haku's own libmpv. Every frame stays on the GPU, and subtitles, controls and the glass are drawn after it, at full resolution.
 - Tiers: **Fast**, **Balanced** and **Quality** (on an RTX 4070 at 1080p: about 85, 31 and 17 fps), plus **Auto**, which picks the best one that keeps up with each video's size and frame rate. A **sharp** or **soft** look.
 - *Detect best for this PC* times each tier on your card, and Auto then uses the measured speeds.
+- Two anime models to choose from: **AnimeJaNai** (above) or [**Adore**](https://github.com/renarchi/Re-SISR/releases/tag/Adore) by renarchi, made for 1080p anime, with crisper, darker line art. Adore runs at about 26 fps on an RTX 4070 at 1080p, between Balanced and Quality. When it can't keep up with a video, Auto drops to AnimeJaNai's faster tiers for that video. It's downloaded (3 MB) from renarchi's release the first time you pick it, and kept only if it's exactly that file.
 - A second of frames upscaled ahead of playback, shown in green on the timeline. Starting a video, turning AI on and clicking the timeline wait a moment for it to fill, with a loading panel. Turning AI on while paused shows the AI picture straight away.
 - If a tier can't keep up with a video, Auto steps down to a faster one for that video; it only turns off if the fastest can't keep up either.
 - Any video up to 2560×1728 (1080p, 1440×1080 4:3, 720p, SD), 8- or 10-bit. 4K files and HDR play as they are.
@@ -229,14 +230,14 @@ AI upscaling is an mpv video filter (`vf_hakusr`) that hands D3D11 decoder frame
 ## Privacy
 
 There's no telemetry and no account. Haku Player only goes online to fetch details and timings:
-AniList, AnimeThemes, Cinemeta, IMDb's poster lookup, AniSkip, TheIntroDB and IntroDB. Discord status, when you
+AniList, AnimeThemes, Cinemeta, IMDb's poster lookup, AniSkip, TheIntroDB and IntroDB. Picking the Adore model downloads it once from GitHub. Discord status, when you
 turn it on, talks to the Discord app on your own PC.
 
 ## Credits
 
 - [mpv](https://mpv.io) and [libplacebo](https://code.videolan.org/videolan/libplacebo) for playback and the shader hook; [FFmpeg](https://ffmpeg.org) and Chromaprint for previews and fingerprints.
 - [AniList](https://anilist.co), [AnimeThemes](https://animethemes.moe), [Cinemeta](https://v3-cinemeta.strem.io), [AniSkip](https://aniskip.com), [TheIntroDB](https://theintrodb.org) and [IntroDB](https://introdb.app) for their free APIs.
-- AI upscaling: [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) models by the-database (CC BY-NC-SA 4.0, not included), run with [NVIDIA TensorRT](https://developer.nvidia.com/tensorrt).
+- AI upscaling: [AnimeJaNai](https://github.com/the-database/mpv-upscale-2x_animejanai) models by the-database and [Adore](https://github.com/renarchi/Re-SISR) by renarchi (both CC BY-NC-SA 4.0, not included), run with [NVIDIA TensorRT](https://developer.nvidia.com/tensorrt).
 - [Outfit](https://github.com/Outfitio/Outfit-Fonts) by The Outfit Project Authors, under the [SIL Open Font License](Assets/Fonts/OFL-Outfit.txt).
 - Artwork in the screenshots belongs to its owners. The screenshots show the author's own library.
 

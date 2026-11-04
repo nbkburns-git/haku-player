@@ -204,8 +204,9 @@ public partial class MainWindow
         {
             guardFrom = DateTime.UtcNow.AddSeconds(3);
             controls?.SetUpscale(h * 2);
-            controls?.SetUpscaleButton(true, true, $"AI upscaling on: {tier.Name}, {(look == "soft" ? "soft" : "sharp")} look, {w}×{h} → {w * 2}×{h * 2} (Ctrl+U)");
-            Toast($"AI upscaling on: {tier.Name}, {(look == "soft" ? "soft" : "sharp")} look");
+            string what = tier.Key == "adore" ? "Adore" : $"{tier.Name}, {(look == "soft" ? "soft" : "sharp")} look"; // Adore has no looks
+            controls?.SetUpscaleButton(true, true, $"AI upscaling on: {what}, {w}×{h} → {w * 2}×{h * 2} (Ctrl+U)");
+            Toast($"AI upscaling on: {what}");
             if (aiHolding) AiRelease(1000); else controls?.SetAiLoading(null); // paused by you: it's ready, nothing to wait for
             PollAiBuffer(my, key);
         }

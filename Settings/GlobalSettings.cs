@@ -331,7 +331,7 @@ public partial class MainWindow
         Section(p, "AI upscaling");
         Toggle(p, "AI upscaling", !Upscaler.Installed ? @"Needs the Haku Upscaler pack in %LOCALAPPDATA%\Haku Upscaler"
                 : Upscaler.Speed <= 0 ? "Needs an NVIDIA RTX graphics card"
-                : $"Redraws videos at twice the size with AnimeJaNai, live on your {gpu}",
+                : $"Redraws videos at twice the size with {(S.UpscaleModel == "adore" ? "Adore" : "AnimeJaNai")}, live on your {gpu}",
             S.Upscale, () => Change(() => { S.Upscale = !S.Upscale; ApplyUpscaleSetting(); }));
         if (!S.Upscale || !Upscaler.Installed || Upscaler.Speed <= 0)
         {
@@ -351,7 +351,12 @@ public partial class MainWindow
         });
 
         Section(p, "Model");
-        Chips(p, "Speed and quality", new[] { ("auto", "Auto"), ("fast", "Fast"), ("balanced", "Balanced"), ("quality", "Quality") }, S.UpscaleTier,
+        Chips(p, "Anime model", new[] { ("animejanai", "AnimeJaNai"), ("adore", "Adore") }, S.UpscaleModel,
+            v => Change(() => { S.UpscaleModel = v; ApplyUpscaleSetting(); }));
+        Note(S.UpscaleModel == "adore"
+            ? "Adore by renarchi, made for 1080p anime: a little slower than Balanced. When your card can't keep up with a video, AnimeJaNai's faster tiers take over. Downloaded (3 MB) from renarchi's GitHub the first time."
+            : "AnimeJaNai by the-database: three sizes, from Fast to Quality, in a sharp or soft look.");
+        Chips(p, "Speed and quality", new[] { ("auto", "Auto") }.Concat(Upscaler.Tiers.Select(t => (t.Key, t.Name))).ToArray(), S.UpscaleTier,
             v => Change(() => { S.UpscaleTier = v; ApplyUpscaleSetting(); }));
         var detect = new Button { Style = (Style)FindResource("Glass"), Padding = new Thickness(16, 8, 16, 8), FontSize = 14, Margin = new Thickness(4, 6, 0, 0),
             HorizontalAlignment = HorizontalAlignment.Left, IsEnabled = upscaleDetecting == null && !upscalePreparing,
@@ -407,8 +412,9 @@ public partial class MainWindow
             missing |= !ready;
             Cell(row, 0, t.Name + (auto == t ? "  · Auto" : ""), bold: auto == t);
             Cell(row, 1, t.Size, muted: true);
-            Cell(row, 2, $"{(Upscaler.Measured(t) != null ? "" : "~")}{fps:0} fps", muted: fps < 27.6);
-            if (fps < 27.6) slow.Add(t.Name);
+            bool keepsUp = fps >= 23.976 * (t.Key == "adore" ? 1.05 : 1.15); // the headroom Auto wants (Upscaler.Pick)
+            Cell(row, 2, $"{(Upscaler.Measured(t) != null ? "" : "~")}{fps:0} fps", muted: !keepsUp);
+            if (!keepsUp) slow.Add(t.Name);
             Cell(row, 3, ready ? "Ready" : "Not prepared", accent: ready, muted: !ready);
             row++;
         }
@@ -443,7 +449,7 @@ public partial class MainWindow
              "• If frames start dropping, it turns itself off for that video. The sparkle button in the player shows what it's doing; Ctrl+U turns it on or off.");
         Credits();
 
-        void Credits() => Note("Models: AnimeJaNai by the-database (CC BY-NC-SA 4.0). Runs on NVIDIA TensorRT.");
+        void Credits() => Note("Models: AnimeJaNai by the-database and Adore by renarchi (both CC BY-NC-SA 4.0). Runs on NVIDIA TensorRT.");
         }
 
         void Note(string text) => p.Children.Add(new TextBlock { Text = text, FontSize = 12.5, Foreground = (Brush)FindResource("Muted"),

@@ -55,12 +55,15 @@ public partial class App : Application
         Debug.Assert(InfoService.SeriesFromFile(@"x\Monster.2004.S01E01.Herr.Dr.Tenma.1080p.BluRay.DUAL.FLAC.2.0.x264-Kitsune.mkv") is ("Monster", 2004));
         Debug.Assert(InfoService.SeriesFromFile(@"x\[Anime Time] Neon Genesis Evangelion - 01.mkv")?.Title == "Neon Genesis Evangelion");
         // Self-check for the upscaler's Auto tier (speeds relative to an RTX 4070)
-        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 1.0)?.Key == "balanced"); // 4070, 1080p film
-        Debug.Assert(Upscaler.AutoFor(1280, 720, 23.976, 1.0)?.Key == "quality");   // 720p leaves room for Compact
-        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 0.55)?.Key == "fast");    // RTX 3060
-        Debug.Assert(Upscaler.AutoFor(1920, 1080, 60, 1.0)?.Key == "fast");         // 60 fps video
-        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 2.2)?.Key == "quality");  // RTX 4090
-        Debug.Assert(Upscaler.AutoFor(3840, 2160, 23.976, 0.3) == null);            // nothing keeps up
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 1.0, Upscaler.AnimeJaNai)?.Key == "balanced"); // 4070, 1080p film
+        Debug.Assert(Upscaler.AutoFor(1280, 720, 23.976, 1.0, Upscaler.AnimeJaNai)?.Key == "quality");   // 720p leaves room for Compact
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 0.55, Upscaler.AnimeJaNai)?.Key == "fast");    // RTX 3060
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 60, 1.0, Upscaler.AnimeJaNai)?.Key == "fast");         // 60 fps video
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 2.2, Upscaler.AnimeJaNai)?.Key == "quality");  // RTX 4090
+        Debug.Assert(Upscaler.AutoFor(3840, 2160, 23.976, 0.3, Upscaler.AnimeJaNai) == null);            // nothing keeps up
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 1.0, Upscaler.Adore)?.Key == "adore");    // 4070, 1080p film: Adore
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 29.97, 1.0, Upscaler.Adore)?.Key == "fast");      // 30 fps: too fast for Adore and Balanced
+        Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 0.55, Upscaler.Adore)?.Key == "fast");    // else AnimeJaNai's faster tiers
 #endif
         base.OnStartup(e);
     }
