@@ -72,14 +72,6 @@ sealed class MpvVideo
         d9 = D3D9.Direct3DCreate9Ex();
         var pp = new Vortice.Direct3D9.PresentParameters { Windowed = true, SwapEffect = Vortice.Direct3D9.SwapEffect.Discard, DeviceWindowHandle = GetDesktopWindow(), PresentationInterval = PresentInterval.Default };
         dev9 = d9.CreateDeviceEx(0, DeviceType.Hardware, IntPtr.Zero, CreateFlags.HardwareVertexProcessing | CreateFlags.Multithreaded | CreateFlags.FpuPreserve, pp);
-        // a game in front keeps the GPU busy and Windows serves it first: our few small draws a frame then wait behind it
-        // and frames drop (the pop-out over World of Warcraft). Asking for a higher GPU priority needs no admin rights.
-        using (var dxgi = dev.QueryInterface<Vortice.DXGI.IDXGIDevice>())
-        {
-            var r11 = dxgi.SetGPUThreadPriority(7);
-            bool ok9 = true; try { dev9.SetGPUThreadPriority(7); } catch { ok9 = false; }
-            System.Diagnostics.Debug.Assert(r11.Success && ok9, $"GPU priority refused: {r11} / {ok9}"); // a refusal just plays as before
-        }
 
         // the render context: mpv draws with our device
         var apiType = Marshal.StringToHGlobalAnsi("d3d11");
