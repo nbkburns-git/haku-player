@@ -333,9 +333,11 @@ public partial class MainWindow
                 : Upscaler.Speed <= 0 ? "Needs an NVIDIA RTX graphics card"
                 : $"Redraws videos at twice the size with {(S.UpscaleModel == "adore" ? "Adore" : "AnimeJaNai")}, live on your {gpu}",
             S.Upscale, () => Change(() => { S.Upscale = !S.Upscale; ApplyUpscaleSetting(); }));
+        // switched off you can still pick the model and the rest for when it's on; only a missing pack or GPU hides them
         if (!S.Upscale || !Upscaler.Installed || Upscaler.Speed <= 0)
-        {
             Note("Turn it on or off while watching with the sparkle button in the player, or Ctrl+U.");
+        if (!Upscaler.Installed || Upscaler.Speed <= 0)
+        {
             Credits();
             return;
         }

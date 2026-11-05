@@ -789,9 +789,9 @@ public partial class PlayerControls : UserControl
 
         Header("AI upscaling");
         Item("AI upscaling  (Ctrl+U)", S.Upscale, () => { ToggleUpscale(); BuildMenu(); });
+        Chips("Model", new[] { ("animejanai", "AnimeJaNai"), ("adore", "Adore") }, S.UpscaleModel, m => Change(() => { S.UpscaleModel = m; ApplyUpscale(); })); // also while off
         if (S.Upscale)
         {
-            Chips("Model", new[] { ("animejanai", "AnimeJaNai"), ("adore", "Adore") }, S.UpscaleModel, m => Change(() => { S.UpscaleModel = m; ApplyUpscale(); }));
             Chips("Tier", new[] { ("auto", "Auto") }.Concat(Upscaler.Tiers.Select(t => (t.Key, t.Name))).ToArray(), S.UpscaleTier,
                 t => Change(() => { S.UpscaleTier = t; ApplyUpscale(); }));
             Chips("Look", new[] { ("sharp", "Sharp"), ("soft", "Soft") }, S.UpscaleLook, l => Change(() => { S.UpscaleLook = l; ApplyUpscale(); }));

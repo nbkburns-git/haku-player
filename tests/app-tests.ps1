@@ -468,7 +468,15 @@ try {
         Press 'Anime model: AnimeJaNai'; Start-Sleep 1.5
         $janaiChips = [bool](Find 'Speed and quality: Quality') -and -not (Find 'Speed and quality: Adore')
         $saved = (Get-Content (Join-Path $DataDir "settings.json") -Raw | ConvertFrom-Json).UpscaleModel
-        Report 'adore-settings' ($adoreChips -and $adoreNote -and $janaiChips -and $saved -eq 'animejanai') "Adore: its tiers shown $adoreChips, its note $adoreNote; switched to AnimeJaNai: its tiers shown $janaiChips, saved '$saved'"
+        Stop-Haku
+        # with AI upscaling switched off the model can still be picked (it had been hidden)
+        Start-Haku $null @{ Upscale = $false; UpscaleModel = 'animejanai' } | Out-Null
+        WaitFor { Find 'App settings' } 20 | Out-Null
+        Press 'App settings'; Start-Sleep 1; Press 'Settings: AI upscaling'; Start-Sleep 1.5
+        $offShown = [bool](Find 'Anime model: Adore')
+        if ($offShown) { Press 'Anime model: Adore'; Start-Sleep 1 }
+        $offSaved = (Get-Content (Join-Path $DataDir "settings.json") -Raw | ConvertFrom-Json)
+        Report 'adore-settings' ($adoreChips -and $adoreNote -and $janaiChips -and $saved -eq 'animejanai' -and $offShown -and $offSaved.UpscaleModel -eq 'adore' -and -not $offSaved.Upscale) "Adore: its tiers shown $adoreChips, its note $adoreNote; switched to AnimeJaNai: its tiers shown $janaiChips, saved '$saved'; AI off: model choice shown $offShown, picked Adore saved '$($offSaved.UpscaleModel)', still off: $(-not $offSaved.Upscale)"
         Stop-Haku
     }
 
