@@ -29,6 +29,7 @@ static class Segments
         public List<Segment> Online { get; set; } = new();
         public DateTime OnlineAt { get; set; }
         public List<Segment>? Detected { get; set; } // null = not tried yet
+        public string? For { get; set; }             // the show the online times are for: re-matched to another, they're fetched again
     }
 
     static readonly string FilePath = Path.Combine(Settings.DataDir, "segments.json");
@@ -98,11 +99,12 @@ static class Segments
     public static async Task<List<Segment>> Online(Entry e, Video v, double duration)
     {
         var rec = RecFor(v.Path);
-        if (rec.OnlineAt > DateTime.UtcNow.AddDays(-7)) return rec.Online; // nothing found is re-checked after a week (people keep submitting)
+        var info = InfoService.Cached(e.InfoKey);
+        string? show = e.Kind == "anime" ? (info?.AniListId is int id ? $"anilist:{id}" : null) : info?.ImdbId;
+        if (rec.OnlineAt > DateTime.UtcNow.AddDays(-7) && rec.For == show) return rec.Online; // nothing found is re-checked after a week (people keep submitting)
         List<Segment>? found = null;
         try
         {
-            var info = InfoService.Cached(e.InfoKey);
             if (e.Kind == "anime" && e.Unit == "episodes" && info?.AniListId is int al && v.Season <= 1)
             {
                 int ep = v.Ep > 0 ? v.Ep : v.N;
@@ -118,6 +120,7 @@ static class Segments
         catch { return rec.Online; } // offline: try again next time
         rec.Online = found ?? new();
         rec.OnlineAt = DateTime.UtcNow;
+        rec.For = show;
         Save();
         return rec.Online;
     }

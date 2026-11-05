@@ -61,7 +61,8 @@ function Start-Haku([string]$file, [hashtable]$settings = @{}, [hashtable]$detai
     New-Item -ItemType Directory $DataDir | Out-Null
     # show details as Haku saves them (info\<key>.json), so a test doesn't wait for the network: @{ 'tv_South_Park' = @('Animation', 'Comedy') }
     if ($details.Count) { New-Item -ItemType Directory (Join-Path $DataDir 'info') | Out-Null }
-    foreach ($k in $details.Keys) { @{ Title = $k; Genres = $details[$k]; Source = 'test' } | ConvertTo-Json | Set-Content (Join-Path $DataDir "info\$k.json") -Encoding utf8 }
+    # (or a saved file as it is: a JSON string)
+    foreach ($k in $details.Keys) { $(if ($details[$k] -is [string] -and $details[$k].StartsWith('{')) { $details[$k] } else { @{ Title = $k; Genres = $details[$k]; Source = 'test' } | ConvertTo-Json }) | Set-Content (Join-Path $DataDir "info\$k.json") -Encoding utf8 }
     # UpscaleLiveAction = anime: files opened from outside a library count as movies, and these tests are about the AI
     $conf = [ordered]@{ SettingsVersion = 3; Upscale = $true; UpscaleTier = 'auto'; UpscaleLiveAction = 'anime'; Resume = $false; Autoplay = $true; AutoPopOut = $false }
     foreach ($k in $settings.Keys) { $conf[$k] = $settings[$k] }
@@ -337,6 +338,34 @@ try {
         }
     }
 
+    if (Want 'segments-opening') {
+        # an episode whose chapters say "Opening" at 0:00 gets "Skip opening" there, even with online times on
+        # (Hunter x Hunter (2011) had been matched to the 1999 series, whose AniSkip times put an ending there)
+        if (-not ($Media.ChapterOpening -and (Test-Path -LiteralPath $Media.ChapterOpening))) { Skip 'segments-opening' "missing file" } else {
+            $lib = Split-Path (Split-Path (Split-Path $Media.ChapterOpening -Parent) -Parent) -Parent
+            Start-Haku $Media.ChapterOpening @{ Upscale = $false; OnlineSegments = $true; Libs = @(@{ Id = 't'; Name = 'Anime'; Folders = @(@{ Path = $lib; Kind = 'anime' }); Home = $true }) } | Out-Null
+            $op = WaitFor { Find 'Skip Opening' } 20
+            $ed = [bool](Find 'Skip Ending')
+            Report 'segments-opening' ($op -ge 0 -and -not $ed) "'Skip opening' after $op s, 'Skip ending' shown: $ed"
+            Stop-Haku
+        }
+    }
+
+    if (Want 'rematch') {
+        # a show matched by an older search (Hunter x Hunter (2011) saved as the 1999 series) is looked up again once
+        if (-not ($Media.ChapterOpening -and (Test-Path -LiteralPath $Media.ChapterOpening))) { Skip 'rematch' "missing file" } else {
+            $showDir = Split-Path (Split-Path $Media.ChapterOpening -Parent) -Parent
+            $key = [regex]::Replace((Split-Path $showDir -Leaf), '[^\w]+', '_')
+            $old = @{ Title = 'Hunter x Hunter'; Genres = @('Action'); Year = 1999; AniListId = 136; Source = 'search' } | ConvertTo-Json
+            Start-Haku $null @{ Libs = @(@{ Id = 't'; Name = 'Anime'; Folders = @(@{ Path = (Split-Path $showDir -Parent); Kind = 'anime' }); Home = $true }) } @{ $key = $old } | Out-Null
+            $f = Join-Path $DataDir "info\$key.json"
+            $fixed = WaitFor { (Get-Content $f -Raw | ConvertFrom-Json).AniListId -eq 11061 } 90
+            $now = Get-Content $f -Raw | ConvertFrom-Json
+            Report 'rematch' ($fixed -ge 0) "saved as '$($now.Title)' ($($now.Year), AniList $($now.AniListId)) after $fixed s"
+            Stop-Haku
+        }
+    }
+
     if (Want 'show-details') {
         if (-not (($Media.AnimeLibrary -and (Test-Path -LiteralPath $Media.AnimeLibrary)))) { Skip 'show-details' "missing library" } else {
             Start-Haku $null @{ Libs = @(@{ Id = 't'; Name = 'Anime'; Folders = @(@{ Path = $Media.AnimeLibrary; Kind = 'anime' }); Home = $true }) } | Out-Null
@@ -367,39 +396,35 @@ try {
     }
 
     # ---------- the anime model choice (Settings.UpscaleModel): AnimeJaNai or Adore ----------
-    $pack = Join-Path $env:LOCALAPPDATA "Haku Upscaler"
-    $adoreModel = Join-Path $pack "models\2x_Adore_renarchi_fp16.onnx"
-    $adoreEngine = Join-Path $pack "engines\2x_Adore_renarchi_fp16.max2560x1728.engine"
     function MenuPress([string]$name) { if (-not (Find $name)) { Press 'Settings'; Start-Sleep 0.6 }; Press $name }
     function TipFor([string]$pattern, [double]$seconds) { WaitFor { (AiTip) -match $pattern } $seconds }
     $hasH264 = $Media.H264 -and (Test-Path -LiteralPath $Media.H264)
 
     if (Want 'adore-first') {
-        # picking Adore the first time: downloaded, checked, prepared while the video plays on, then used.
-        # Your own Adore model and engine are moved aside for the test and put back after, never deleted.
+        # picking Adore the first time: downloaded, checked, prepared while the video plays on, then used. It runs with
+        # its own empty models folder (HAKU_MODELS_DIR), so your pack's models and engines are never touched.
         if (-not $hasH264) { Skip 'adore-first' "missing file" } else {
-            $aside = @($adoreModel, $adoreEngine) | Where-Object { Test-Path -LiteralPath $_ }
-            foreach ($f in $aside) { Move-Item -LiteralPath $f "$f.test-aside" -Force }
-            try {
-                Start-Haku $Media.H264 @{ UpscaleModel = 'adore'; UpscaleTier = 'auto' } | Out-Null
-                # what the AI button says, every 2 s: the steps it went through (shown when it fails)
-                $seen = [System.Collections.Generic.List[string]]::new(); $t0 = Get-Date; $prep = -1; $on = -1; $playing = $false
-                while (((Get-Date) - $t0).TotalSeconds -lt 300 -and $on -lt 0) {
-                    $tip = ((AiTip) -split "`n")[0]; $secs = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
-                    if ($seen.Count -eq 0 -or $seen[$seen.Count - 1] -notlike "*$tip") { $seen.Add("$secs s: $tip | pause=$(Q 'pause')") }
-                    if ($prep -lt 0 -and $tip -match 'downloading and preparing Adore') { $prep = $secs }
-                    if ($prep -ge 0 -and -not $playing) { $playing = (Q 'pause') -eq 'no' }
-                    if ($tip -match 'on: Adore') { $on = $secs }
-                    Start-Sleep 2
-                }
-                $hash = if (Test-Path -LiteralPath $adoreModel) { (Get-FileHash -LiteralPath $adoreModel -Algorithm SHA256).Hash } else { "(none)" }
-                $ok = $prep -ge 0 -and $playing -and $on -ge 0 -and $hash -eq '79E007EDA5721CFA596945D5849320E2FAD67F8596F9AC31ED06CC8E3DDAF57D' -and (Test-Path -LiteralPath $adoreEngine)
-                Report 'adore-first' $ok ("said 'downloading and preparing' after $prep s, video playing meanwhile: $playing, Adore on after $on s, model checksum ok: $($hash -like '79E007ED*'), engine built: $(Test-Path -LiteralPath $adoreEngine)" + $(if (-not $ok) { " | steps: " + ($seen -join ' / ') } else { "" }))
-                Stop-Haku
+            $store = Join-Path $Out "models-first"
+            if (Test-Path $store) { Remove-Item $store -Recurse -Force }
+            New-Item -ItemType Directory $store | Out-Null
+            $env:HAKU_MODELS_DIR = $store
+            try { Start-Haku $Media.H264 @{ UpscaleModel = 'adore'; UpscaleTier = 'auto' } | Out-Null } finally { Remove-Item Env:HAKU_MODELS_DIR }
+            $model = Join-Path $store "models\2x_Adore_renarchi_fp16.onnx"; $engine = Join-Path $store "engines\2x_Adore_renarchi_fp16.max2560x1728.engine"
+            # what the AI button says, every 2 s: the steps it went through (shown when it fails)
+            $seen = [System.Collections.Generic.List[string]]::new(); $t0 = Get-Date; $prep = -1; $on = -1; $playing = $false
+            while (((Get-Date) - $t0).TotalSeconds -lt 300 -and $on -lt 0) {
+                $tip = ((AiTip) -split "`n")[0]; $secs = [math]::Round(((Get-Date) - $t0).TotalSeconds, 1)
+                if ($seen.Count -eq 0 -or $seen[$seen.Count - 1] -notlike "*$tip*") { $seen.Add("$secs s: $tip | pause=$(Q 'pause')") }
+                if ($prep -lt 0 -and $tip -match 'downloading and preparing Adore') { $prep = $secs }
+                if ($prep -ge 0 -and -not $playing) { $playing = (Q 'pause') -eq 'no' }
+                if ($tip -match 'on: Adore') { $on = $secs }
+                Start-Sleep 2
             }
-            finally {
-                foreach ($f in $aside) { if (Test-Path -LiteralPath "$f.test-aside") { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; Move-Item -LiteralPath "$f.test-aside" $f -Force } }
-            }
+            $hash = if (Test-Path -LiteralPath $model) { (Get-FileHash -LiteralPath $model -Algorithm SHA256).Hash } else { "(none)" }
+            $ok = $prep -ge 0 -and $playing -and $on -ge 0 -and $hash -eq '79E007EDA5721CFA596945D5849320E2FAD67F8596F9AC31ED06CC8E3DDAF57D' -and (Test-Path -LiteralPath $engine)
+            Report 'adore-first' $ok ("said 'downloading and preparing' after $prep s, video playing meanwhile: $playing, Adore on after $on s, model checksum ok: $($hash -like '79E007ED*'), engine built: $(Test-Path -LiteralPath $engine)" + $(if (-not $ok) { " | steps: " + ($seen -join ' / ') } else { "" }))
+            Stop-Haku
+            Remove-Item $store -Recurse -Force -ErrorAction SilentlyContinue
         }
     }
 

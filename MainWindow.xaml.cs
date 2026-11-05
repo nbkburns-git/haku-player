@@ -1402,6 +1402,9 @@ public partial class MainWindow : Window
                                                      c.TryGetProperty("title", out var tt) && tt.ValueKind == JsonValueKind.String ? tt.GetString() ?? "" : ""))
                             .OrderBy(c => c.Time).ToList();
                         controls?.SetChapters(fileChapters);
+                        // chapters can arrive after the openings were looked for: they're the best source, so look again
+                        if (fileChapters.Count > 0 && segmentsFor != null && controls is { Length: > 0 } cl && playingIndex >= 0 && playingIndex < entry.Videos.Count)
+                        { segmentsFor = null; _ = FindSegments(entry, entry.Videos[playingIndex], cl.Length, my); }
                         break;
                     case "pause":
                         controls?.SetPause(d.ValueKind == JsonValueKind.True);

@@ -18,8 +18,10 @@ static class Upscaler
     public static readonly string Dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Haku Upscaler");
     // Haku's own copy next to the exe (always matches this build), else an older pack's copy
     public static string Lib => File.Exists(Path.Combine(AppContext.BaseDirectory, "haku_sr.dll")) ? Path.Combine(AppContext.BaseDirectory, "haku_sr.dll") : Path.Combine(Dir, "haku_sr.dll");
-    static string Models => Path.Combine(Dir, "models");
-    static string Engines => Path.Combine(Dir, "engines");
+    // HAKU_MODELS_DIR: models and engines somewhere else (tests that download and build Adore never touch your pack)
+    static readonly string Store = Environment.GetEnvironmentVariable("HAKU_MODELS_DIR") is { Length: > 0 } test ? test : Dir;
+    static string Models => Path.Combine(Store, "models");
+    static string Engines => Path.Combine(Store, "engines");
 
     // Tiers, fastest first. fps: measured on an RTX 4070 through the whole pipeline, 1920x1080 -> 3840x2160 (FP16, size-range engine).
     public record Tier(string Key, string Name, string Size, double Fps4070);

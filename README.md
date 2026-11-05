@@ -216,7 +216,7 @@ powershell -ExecutionPolicy Bypass -File tests\app-tests.ps1      # the app, end
 The app tests build a test copy with its own data folder (your settings and history aren't touched) and drive it through
 mpv's pipe and UI Automation: the AI start-up buffer, exact seeks, pausing, the AI button, turning it on while paused, a
 10-bit 30 fps video (no frame drops, no green edge), a 4K file, subtitle choice, the next episode, your own subtitle files,
-RTX Video on a live-action show and the anime model on a cartoon, the Adore model (its first download and preparation, switching model and tier while playing, leftover settings, the settings page), leaving the player mid-start, show-detail matching, renaming a show, the
+RTX Video on a live-action show and the anime model on a cartoon, the Adore model (its first download and preparation, switching model and tier while playing, leftover settings, the settings page), leaving the player mid-start, openings from a file's chapters, show-detail matching (and re-checking older matches), renaming a show, the
 window staying on its monitor, and no UI stalls or "not responding" anywhere. Put your own test videos in
 `tests\media.local.ps1` (git-ignored; the keys are listed in `tests\app-tests.ps1`). Test windows can go on another
 monitor and never take focus: set `$TestWindow = "x,y,w,h"` there, in screen pixels.

@@ -55,6 +55,8 @@ public partial class App : Application
         Debug.Assert(InfoService.SeriesFromFile(@"x\Monster.2004.S01E01.Herr.Dr.Tenma.1080p.BluRay.DUAL.FLAC.2.0.x264-Kitsune.mkv") is ("Monster", 2004));
         Debug.Assert(InfoService.SeriesFromFile(@"x\[Anime Time] Neon Genesis Evangelion - 01.mkv")?.Title == "Neon Genesis Evangelion");
         // Self-check for the upscaler's Auto tier (speeds relative to an RTX 4070)
+        Debug.Assert(InfoService.NormTitle("Hunter x Hunter (2011)") == InfoService.NormTitle("Hunter x Hunter")); // the year decides
+        Debug.Assert(InfoService.NormTitle("Steins;Gate 0") == "steinsgate0");
         Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 1.0, Upscaler.AnimeJaNai)?.Key == "balanced"); // 4070, 1080p film
         Debug.Assert(Upscaler.AutoFor(1280, 720, 23.976, 1.0, Upscaler.AnimeJaNai)?.Key == "quality");   // 720p leaves room for Compact
         Debug.Assert(Upscaler.AutoFor(1920, 1080, 23.976, 0.55, Upscaler.AnimeJaNai)?.Key == "fast");    // RTX 3060

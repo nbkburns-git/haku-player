@@ -20,7 +20,8 @@ public sealed record ShowInfo(string? Title, string? Native, string? Description
                               int? Year, int? Episodes, string? Studio, double? Score, string? BannerFile, string? CoverUrl = null,
                               int? AniListId = null, string? Source = null, // Source: "manual" / "animethemes" / "search" / "cinemeta"; null = older cache
                               string? ImdbId = null,
-                              Dictionary<string, string>? EpisodeNames = null); // official episode names, key "season:episode" (season 0 = specials)
+                              Dictionary<string, string>? EpisodeNames = null, // official episode names, key "season:episode" (season 0 = specials)
+                              int Matcher = 0); // the search's version (InfoService.MatcherVersion) when Source is "search"
 
 // A search result for picking the right show by hand.
 public sealed record ShowChoice(string Id, string Title, string? Other, int? Year, string? Format, int? Episodes, string? Cover); // Id: AniList id or IMDb id
@@ -56,8 +57,12 @@ static class InfoService
         catch { return null; }
     }
 
+    // v1: a year in the name now outweighs an exact title ("Hunter x Hunter (2011)" had been matched to the 1999 series)
+    const int MatcherVersion = 1;
+
+    // An automatic match from an older search is looked up again once (keeping it if that fails); your picks never are.
     public static async Task<ShowInfo?> Get(Entry e) =>
-        Cached(e.InfoKey) is ShowInfo hit ? hit : await Refresh(e);
+        Cached(e.InfoKey) is ShowInfo hit && !(hit.Source == "search" && hit.Matcher < MatcherVersion) ? hit : await Refresh(e);
 
     // Look it up again (ignoring the cache) and save the result; keeps the old details if this fails.
     public static async Task<ShowInfo?> Refresh(Entry e)
@@ -73,7 +78,7 @@ static class InfoService
             {
                 var (media, source) = await Lookup(e.Folder, e.Name);
                 if (media == null) return Cached(name);
-                info = ToInfo(media) with { Source = source };
+                info = ToInfo(media) with { Source = source, Matcher = MatcherVersion };
                 banner = media["bannerImage"]?.GetValue<string>();
                 // AniList has no episode titles: get them from the same show on Cinemeta (IMDb), by its English title.
                 // An empty list marks "looked, nothing found", so it isn't retried on every start.
@@ -255,7 +260,7 @@ static class InfoService
             return list.Select((m, idx) => (m, idx)).OrderByDescending(t =>
             {
                 var m = t.m!;
-                var main = new[] { m["title"]?["english"], m["title"]?["romaji"] }.Select(x => x?.GetValue<string>()).Where(x => x != null).Select(x => Norm(x!)).ToList();
+                var main = new[] { m["title"]?["english"], m["title"]?["romaji"] }.Select(x => x?.GetValue<string>()).Where(x => x != null).Select(x => NormTitle(x!)).ToList();
                 var syn = m["synonyms"]?.AsArray().Select(x => x?.GetValue<string>()).Where(x => x != null).Select(x => Norm(x!)).ToList() ?? new();
                 double score = main.Contains(want) ? 150 : main.Any(x => x.StartsWith(want)) ? 50 : syn.Contains(want) ? 45 : 0;
                 score += m["format"]?.GetValue<string>() switch { "TV" => 20, "MOVIE" => 5, "TV_SHORT" => -15, "MUSIC" => -40, null => 0, _ => -20 }; // OVA, ONA, SPECIAL
@@ -277,6 +282,9 @@ static class InfoService
     }
 
     static string Norm(string s) => Regex.Replace(s.ToLowerInvariant(), @"[^a-z0-9]", "");
+    // a title without the year AniList adds to tell remakes apart: "Hunter x Hunter (2011)" is as exact a match for
+    // "Hunter x Hunter" as the 1999 series, so the year in your folder name decides between them
+    internal static string NormTitle(string s) => Norm(Regex.Replace(s, @"\s*\((19|20)\d\d\)\s*$", ""));
 
     static async Task<JsonNode?> Query(string query, JsonObject vars)
     {
