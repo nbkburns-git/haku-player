@@ -63,6 +63,11 @@ public partial class PlayerControls : UserControl
         previewGlass = new GlassSurface(Preview, 16);
         previewGlass.Live = LiveGlass;
         if (LiveGlass) { pillGlass.Live = topGlass.Live = menuGlass.Live = true; }
+        // The bars' blurs and text shadows are WPF effects, redrawn every video frame (the picture under them changes) on
+        // WPF's own GPU device; with a game in front that work waits and the video stutters while the bars show. Cached,
+        // each bar is drawn once and only redrawn when it changes itself (the clock, the timeline).
+        foreach (var bar in new FrameworkElement[] { Pill, TopBar, Menu, Prompt })
+            bar.CacheMode = new System.Windows.Media.BitmapCache { SnapsToDevicePixels = true };
         // tell mpv's glass shader where the bars are, every frame while anything could be moving (see WatchGlass)
         Closed += (_, _) => { if (watchingGlass) System.Windows.Media.CompositionTarget.Rendering -= OnGlassFrame; watchingGlass = false; };
         SizeChanged += (_, _) => { WatchGlass(); CloseMenu(); }; // e.g. popping out: the menu would no longer fit where it was
