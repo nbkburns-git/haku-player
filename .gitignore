@@ -16,3 +16,7 @@ native/haku_sr/out/
 native/haku_sr/build.log
 # your own test videos for tests\app-tests.ps1
 tests/media.local.ps1
+
+# HDR spike: generated test clips and results
+tools/hdr-spike/clips/
+tools/hdr-spike/results/

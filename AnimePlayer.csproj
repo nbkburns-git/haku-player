@@ -27,6 +27,13 @@
     <None Include="lib\haku_sr.dll" Link="haku_sr.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('lib\haku_sr.dll')" />
   </ItemGroup>
   <ItemGroup>
+    <!-- tools\ holds separate projects (the WinUI/HDR test app): not part of Haku's build -->
+    <Compile Remove="tools\**" />
+    <Page Remove="tools\**" />
+    <ApplicationDefinition Remove="tools\**" />
+    <None Remove="tools\**" />
+  </ItemGroup>
+  <ItemGroup>
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.Direct3D9" Version="3.8.3" />
   </ItemGroup>
