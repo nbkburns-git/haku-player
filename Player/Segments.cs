@@ -22,8 +22,12 @@ public sealed record Chapter(double Time, string Title);
 //   2. online: AniSkip for anime (by MyAnimeList id + episode), TheIntroDB then IntroDB for TV and movies (by IMDb id)
 //   3. detection: the same audio at the same place in two episodes of a season (Chromaprint fingerprints, like Jellyfin's Intro Skipper)
 // Online and detected results are cached per file in segments.json.
-static class Segments
+static partial class Segments
 {
+    [GeneratedRegex(@"^(op\d*|ncop\d*)\b|\b(opening|intro|introduction|theme song|main titles?)\b|オープニング", RegexOptions.IgnoreCase)] private static partial Regex OpeningRx();
+    [GeneratedRegex(@"^(ed\d*|nced\d*)\b|\b(ending|credits|outro|end titles?)\b|エンディング", RegexOptions.IgnoreCase)] private static partial Regex EndingRx();
+    [GeneratedRegex(@"\b(recap|previously)\b", RegexOptions.IgnoreCase)] private static partial Regex RecapRx();
+
     sealed class Rec
     {
         public List<Segment> Online { get; set; } = new();
@@ -76,9 +80,9 @@ static class Segments
     static string? KindOf(string title)
     {
         var t = title.Trim();
-        if (Regex.IsMatch(t, @"^(op\d*|ncop\d*)\b|\b(opening|intro|introduction|theme song|main titles?)\b|オープニング", RegexOptions.IgnoreCase)) return "op";
-        if (Regex.IsMatch(t, @"^(ed\d*|nced\d*)\b|\b(ending|credits|outro|end titles?)\b|エンディング", RegexOptions.IgnoreCase)) return "ed";
-        if (Regex.IsMatch(t, @"\b(recap|previously)\b", RegexOptions.IgnoreCase)) return "recap";
+        if (OpeningRx().IsMatch(t)) return "op";
+        if (EndingRx().IsMatch(t)) return "ed";
+        if (RecapRx().IsMatch(t)) return "recap";
         return null;
     }
 

@@ -103,11 +103,12 @@ static class Discord
 
     static void Write(int op, string json)
     {
-        var body = Encoding.UTF8.GetBytes(json);
-        var buf = new byte[8 + body.Length];
-        BitConverter.GetBytes(op).CopyTo(buf, 0);
-        BitConverter.GetBytes(body.Length).CopyTo(buf, 4);
-        body.CopyTo(buf, 8);
+        // one buffer for the frame: [opcode][length][JSON], little-endian
+        int len = Encoding.UTF8.GetByteCount(json);
+        var buf = new byte[8 + len];
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(buf, op);
+        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(buf.AsSpan(4), len);
+        Encoding.UTF8.GetBytes(json, buf.AsSpan(8));
         pipe!.Write(buf);
         pipe.Flush();
     }

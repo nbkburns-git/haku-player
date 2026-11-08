@@ -26,8 +26,29 @@ public sealed record ShowInfo(string? Title, string? Native, string? Description
 // A search result for picking the right show by hand.
 public sealed record ShowChoice(string Id, string Title, string? Other, int? Year, string? Format, int? Episodes, string? Cover); // Id: AniList id or IMDb id
 
-static class InfoService
+static partial class InfoService
 {
+    // patterns compiled into the app at build time (see Names.cs)
+    const RegexOptions IC = RegexOptions.IgnoreCase;
+    [GeneratedRegex(@"^[A-Za-z0-9]+-(OP|ED)\d*\b")] private static partial Regex ThemeFileRx();
+    [GeneratedRegex(@"\s+")] private static partial Regex SpacesRx();
+    [GeneratedRegex(@"\b(complete( series| collection)?|the complete series|collection|batch|dual[ -]?audio|dubbed|subbed|eng ?(dub|sub)|uncensored|remastered|bd|dvd|tv series|anime)\b", IC)]
+    private static partial Regex NoiseRx();
+    [GeneratedRegex(@"\([^)]*\)")] private static partial Regex ParensRx();
+    [GeneratedRegex(@"^(Season|S)\s*\d+|^Series\s*\d+", IC)] private static partial Regex SeasonDirRx();
+    [GeneratedRegex(@"-(OP|ED)\d|\b(NC)?(OP|ED)\d*\b.*creditless|\bsample\b", IC)] private static partial Regex NotEpisodeRx();
+    [GeneratedRegex(@"\bS(\d+)\b")] private static partial Regex SeasonTagRx();
+    [GeneratedRegex(@"(?<=[a-z])(?=[A-Z])")] private static partial Regex CamelRx();
+    [GeneratedRegex(@"\s*\bS\d+\b")] private static partial Regex SeasonTagSpacedRx();
+    [GeneratedRegex(@"\bSeason \d+\b")] private static partial Regex SeasonWordRx();
+    [GeneratedRegex(@"\s*\((19|20)\d\d\)\s*$")] private static partial Regex TitleYearRx();
+    [GeneratedRegex(@"<br\s*/?>", IC)] private static partial Regex BreakRx();
+    [GeneratedRegex("<[^>]+>")] private static partial Regex TagRx();
+    [GeneratedRegex(@"\(Source:[^)]*\)")] private static partial Regex SourceNoteRx();
+    [GeneratedRegex(@"\n{3,}")] private static partial Regex BlankLinesRx();
+    [GeneratedRegex(@"(19|20)\d\d")] private static partial Regex YearRx();
+    [GeneratedRegex(@"\._V1_[^/]*\.jpg$")] private static partial Regex ImdbSizeRx();
+
     static readonly string Dir = Path.Combine(Settings.DataDir, "info");
     static readonly HttpClient Http = MakeHttp();
     static HttpClient MakeHttp()
@@ -40,7 +61,7 @@ static class InfoService
 
     static readonly System.Collections.Concurrent.ConcurrentDictionary<string, ShowInfo?> Memo = new();
 
-    static string FileFor(string name) => Path.Combine(Dir, Regex.Replace(name, @"[^\w]+", "_") + ".json");
+    static string FileFor(string name) => Path.Combine(Dir, MainWindow.SafeName(name) + ".json");
 
     // Already-fetched details, without touching the network (for search, genres, sorting).
     public static ShowInfo? Cached(string name)
@@ -49,7 +70,9 @@ static class InfoService
         try
         {
             var file = FileFor(name);
-            if (!File.Exists(file)) return null;
+            // remembered as "none" too: the library page asks for every show's details on each filter and sort,
+            // and a show without any cost a disk check every time (only Refresh writes these files, and it updates Memo)
+            if (!File.Exists(file)) { Memo[name] = null; return null; }
             var info = JsonSerializer.Deserialize<ShowInfo>(File.ReadAllText(file));
             Memo[name] = info;
             return info;
@@ -68,7 +91,7 @@ static class InfoService
     public static async Task<ShowInfo?> Refresh(Entry e)
     {
         var name = e.InfoKey;
-        var key = Regex.Replace(name, @"[^\w]+", "_");
+        var key = MainWindow.SafeName(name);
         var file = Path.Combine(Dir, key + ".json");
         try
         {
@@ -122,8 +145,9 @@ static class InfoService
         catch { return Cached(name); } // offline or not found: keep what we had (or show the page without details)
     }
 
-    static Task<JsonNode?> ById(int id) =>
-        Query($"query($id:Int){{Media(id:$id,type:ANIME){{{Fields}}}}}", new JsonObject { ["id"] = id }).ContinueWith(t => t.Result?["Media"]);
+    // awaited, not ContinueWith(t => t.Result): a failed request came back wrapped in an AggregateException
+    static async Task<JsonNode?> ById(int id) =>
+        (await Query($"query($id:Int){{Media(id:$id,type:ANIME){{{Fields}}}}}", new JsonObject { ["id"] = id }))?["Media"];
 
     static async Task<(JsonNode? Media, string Source)> Lookup(string folder, string name)
     {
@@ -138,8 +162,6 @@ static class InfoService
         return (await Search(folder, name), "search");
     }
 
-    static readonly string[] VideoExt = { ".mkv", ".mp4", ".webm", ".avi", ".mov", ".m4v" };
-
     // Files like "KimetsuNoYaiba-OP1-NCBD1080-Encoded…mp4" are AnimeThemes videos ("KimetsuNoYaiba-OP1-NCBD1080.webm").
     // AnimeThemes says which show each belongs to; for a folder we take the main TV series (the earliest, if several seasons).
     static async Task<int?> FromAnimeThemes(string folder)
@@ -147,10 +169,10 @@ static class InfoService
         try
         {
             var stems = Directory.EnumerateFiles(folder, "*", SearchOption.AllDirectories)
-                .Where(f => VideoExt.Contains(Path.GetExtension(f).ToLowerInvariant()))
+                .Where(f => MainWindow.IsVideoExt(f))
                 .Select(f => Path.GetFileNameWithoutExtension(f))
                 .Select(n => n.IndexOf("-Encoded", StringComparison.OrdinalIgnoreCase) is var i and > 0 ? n[..i] : n)
-                .Where(n => Regex.IsMatch(n, @"^[A-Za-z0-9]+-(OP|ED)\d*\b"))
+                .Where(n => ThemeFileRx().IsMatch(n))
                 .Distinct().Take(6).ToList();
             var shows = new List<(string Slug, int Year, string Format)>();
             foreach (var b in stems)
@@ -173,7 +195,7 @@ static class InfoService
     static async Task<JsonNode?> GetJson(string url)
     {
         using var res = await Http.GetAsync(url);
-        return res.IsSuccessStatusCode ? JsonNode.Parse(await res.Content.ReadAsStringAsync()) : null;
+        return res.IsSuccessStatusCode ? await ParseBody(res) : null;
     }
 
     // ---------- names to search for ----------
@@ -192,19 +214,18 @@ static class InfoService
             year ??= fromFiles.Year;
         }
         names.Add(name);
-        return names.Select(n => Regex.Replace(n, @"\s+", " ").Trim(' ', '-', ',')).Where(n => n.Length > 0)
+        return names.Select(n => SpacesRx().Replace(n, " ").Trim(' ', '-', ',')).Where(n => n.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     // Leftover release words CleanTitle doesn't cut at ("... Complete Series", "... Dual Audio").
-    static string StripNoise(string s) =>
-        Regex.Replace(s, @"\b(complete( series| collection)?|the complete series|collection|batch|dual[ -]?audio|dubbed|subbed|eng ?(dub|sub)|uncensored|remastered|bd|dvd|tv series|anime)\b", " ", RegexOptions.IgnoreCase);
+    static string StripNoise(string s) => NoiseRx().Replace(s, " ");
 
     // The series name in an episode's file name, or null for a name that doesn't look like an episode.
     internal static (string Title, int? Year)? SeriesFromFile(string file)
     {
         var n = Path.GetFileName(file).Replace('_', ' '); // "[CBM]_Monster_-_01_-_..." -> "[CBM] Monster - 01 - ..."
-        var title = Regex.Replace(StripNoise(Regex.Replace(MainWindow.ShowGuess(n), @"\([^)]*\)", " ")), @"\s+", " ").Trim(' ', '-');
+        var title = SpacesRx().Replace(StripNoise(ParensRx().Replace(MainWindow.ShowGuess(n), " ")), " ").Trim(' ', '-');
         return title.Length > 1 ? (title, MainWindow.CleanTitle(Path.GetFileNameWithoutExtension(n)).Year) : null;
     }
 
@@ -213,8 +234,8 @@ static class InfoService
     {
         var found = EpisodeFiles(folder).Take(40).Select(SeriesFromFile).Where(x => x != null).Select(x => x!.Value).ToList();
         if (found.Count == 0) return null;
-        var top = found.GroupBy(x => Norm(x.Title)).OrderByDescending(g => g.Count()).First();
-        return top.Count() * 2 >= found.Count ? (top.First().Title, top.Select(x => x.Year).FirstOrDefault(y => y != null)) : null;
+        var top = found.GroupBy(x => Norm(x.Title)).Select(g => g.ToList()).MaxBy(g => g.Count)!; // the first of the biggest, as before
+        return top.Count * 2 >= found.Count ? (top[0].Title, top.Select(x => x.Year).FirstOrDefault(y => y != null)) : null;
     }
 
     // A show's episodes: videos in the folder itself or a "Season N" folder, not "Movies", "NC" (creditless OP/ED),
@@ -222,14 +243,14 @@ static class InfoService
     static IEnumerable<string> EpisodeFiles(string folder)
     {
         IEnumerable<string> dirs;
-        try { dirs = Directory.EnumerateDirectories(folder).Where(d => Regex.IsMatch(Path.GetFileName(d), @"^(Season|S)\s*\d+|^Series\s*\d+", RegexOptions.IgnoreCase)).Prepend(folder).ToList(); }
+        try { dirs = Directory.EnumerateDirectories(folder).Where(d => SeasonDirRx().IsMatch(Path.GetFileName(d.AsSpan()))).Prepend(folder).ToList(); }
         catch { yield break; }
         foreach (var d in dirs)
         {
             IEnumerable<string> files;
             try { files = Directory.EnumerateFiles(d).ToList(); } catch { continue; }
             foreach (var f in files)
-                if (VideoExt.Contains(Path.GetExtension(f).ToLowerInvariant()) && !Regex.IsMatch(Path.GetFileName(f), @"-(OP|ED)\d|\b(NC)?(OP|ED)\d*\b.*creditless|\bsample\b", RegexOptions.IgnoreCase))
+                if (MainWindow.IsVideoExt(f) && !NotEpisodeRx().IsMatch(Path.GetFileName(f.AsSpan())))
                     yield return f;
         }
     }
@@ -240,13 +261,15 @@ static class InfoService
     {
         int files = 0;
         try { files = EpisodeFiles(folder).Count(); } catch { }
-        int season = Regex.Match(name, @"\bS(\d+)\b") is { Success: true } sm ? int.Parse(sm.Groups[1].Value) : 0;
+        int season = SeasonTagRx().Match(name) is { Success: true } sm ? int.Parse(sm.Groups[1].ValueSpan) : 0;
+        // "2nd Season" / "Season 2" / "2" in a result's title: built once per search, not once per result
+        var seasonRx = season > 1 ? new Regex($@"\b({season}(st|nd|rd|th)? Season|Season {season}|{season})\b", RegexOptions.IgnoreCase) : null;
         // each name, then friendlier spellings of it: "SteinsGate" -> "Steins Gate", "Haikyuu S2" -> "Haikyuu Season 2"
         var tries = new List<string>();
         foreach (var n in SearchNames(folder, name, out var year))
         {
-            var spaced = Regex.Replace(n, @"(?<=[a-z])(?=[A-Z])", " ");
-            tries.AddRange(new[] { n, spaced, Regex.Replace(spaced, @"\bS(\d+)\b", "Season $1"), Regex.Replace(spaced, @"\s*\bS\d+\b", "") });
+            var spaced = CamelRx().Replace(n, " ");
+            tries.AddRange(new[] { n, spaced, SeasonTagRx().Replace(spaced, "Season $1"), SeasonTagSpacedRx().Replace(spaced, "") });
         }
         tries = tries.Select(t => t.Trim()).Where(t => t.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).Take(8).ToList();
         int? yearHint = MainWindow.CleanTitle(name).Year ?? SeriesFromFiles(folder)?.Year;
@@ -256,7 +279,7 @@ static class InfoService
             var page = await Query($"query($s:String){{Page(perPage:8){{media(search:$s,type:ANIME,sort:SEARCH_MATCH){{{Fields}}}}}}}", new JsonObject { ["s"] = q });
             var list = page?["Page"]?["media"]?.AsArray();
             if (list == null || list.Count == 0) continue; // nothing for this spelling: try the next
-            string want = Norm(Regex.Replace(q, @"\bSeason \d+\b", ""));
+            string want = Norm(SeasonWordRx().Replace(q, ""));
             return list.Select((m, idx) => (m, idx)).OrderByDescending(t =>
             {
                 var m = t.m!;
@@ -270,10 +293,10 @@ static class InfoService
                 if (files > 3 && m["episodes"]?.GetValue<int?>() is int eps) score += eps + 2 >= files ? 10 : -15;
                 // a year in the folder or file names ("Monster 2004", "Hunter x Hunter (2011)") picks that version
                 if (yearHint != null && m["startDate"]?["year"]?.GetValue<int?>() is int y) score += Math.Abs(y - yearHint.Value) <= 1 ? 40 : -20;
-                if (season > 1)
+                if (seasonRx != null)
                 {
                     var all = string.Join(" ", new[] { m["title"]?["english"], m["title"]?["romaji"] }.Select(x => x?.GetValue<string>() ?? ""));
-                    if (Regex.IsMatch(all, $@"\b({season}(st|nd|rd|th)? Season|Season {season}|{season})\b", RegexOptions.IgnoreCase)) score += 60;
+                    if (seasonRx.IsMatch(all)) score += 60;
                 }
                 return score;
             }).First().m;
@@ -281,17 +304,25 @@ static class InfoService
         return null;
     }
 
-    static string Norm(string s) => Regex.Replace(s.ToLowerInvariant(), @"[^a-z0-9]", "");
+    static string Norm(string s) => MainWindow.Norm(s);
     // a title without the year AniList adds to tell remakes apart: "Hunter x Hunter (2011)" is as exact a match for
     // "Hunter x Hunter" as the 1999 series, so the year in your folder name decides between them
-    internal static string NormTitle(string s) => Norm(Regex.Replace(s, @"\s*\((19|20)\d\d\)\s*$", ""));
+    internal static string NormTitle(string s) => Norm(TitleYearRx().Replace(s, ""));
 
     static async Task<JsonNode?> Query(string query, JsonObject vars)
     {
         var body = new JsonObject { ["query"] = query, ["variables"] = vars }.ToJsonString();
         using var res = await Http.PostAsync("https://graphql.anilist.co", new StringContent(body, Encoding.UTF8, "application/json"));
         if (!res.IsSuccessStatusCode) return null;
-        return JsonNode.Parse(await res.Content.ReadAsStringAsync())?["data"];
+        return (await ParseBody(res))?["data"];
+    }
+
+    // Parsed straight from the network stream: a long show's Cinemeta details run to a megabyte or more,
+    // and reading them into one string first made a second full copy (on the large-object heap).
+    static async Task<JsonNode?> ParseBody(HttpResponseMessage res)
+    {
+        await using var body = await res.Content.ReadAsStreamAsync();
+        return await JsonNode.ParseAsync(body);
     }
 
     static ShowInfo ToInfo(JsonNode m)
@@ -300,11 +331,11 @@ static class InfoService
         var desc = S(m["description"]);
         if (desc != null)
         {
-            desc = Regex.Replace(desc, @"<br\s*/?>", "\n", RegexOptions.IgnoreCase);
-            desc = Regex.Replace(desc, "<[^>]+>", "");
+            desc = BreakRx().Replace(desc, "\n");
+            desc = TagRx().Replace(desc, "");
             desc = System.Net.WebUtility.HtmlDecode(desc);
-            desc = Regex.Replace(desc, @"\(Source:[^)]*\)", "").Trim();
-            desc = Regex.Replace(desc, @"\n{3,}", "\n\n");
+            desc = SourceNoteRx().Replace(desc, "").Trim();
+            desc = BlankLinesRx().Replace(desc, "\n\n");
         }
         var format = S(m["format"]) switch { "TV" => "TV series", "TV_SHORT" => "TV short", "MOVIE" => "Movie", "ONA" => "Web series", var f => f };
         int? score = m["averageScore"]?.GetValue<int?>();
@@ -320,7 +351,7 @@ static class InfoService
 
     const string Cinemeta = "https://v3-cinemeta.strem.io";
     static string? Str(JsonNode? n) => n is JsonValue v ? (v.TryGetValue<string>(out var s) ? s : v.ToString()) : null;
-    static int? YearOf(string? s) => s != null && Regex.Match(s, @"(19|20)\d\d") is { Success: true } m ? int.Parse(m.Value) : null;
+    static int? YearOf(string? s) => s != null && YearRx().Match(s) is { Success: true } m ? int.Parse(m.ValueSpan) : null;
 
     // Your pick, else the search result whose title (and year, from the folder name) fits best.
     static async Task<JsonNode?> FromCinemeta(Entry e, int? yearHint = null)
@@ -363,7 +394,7 @@ static class InfoService
         {
             var res = await GetJson($"https://v3.sg.media-imdb.com/suggestion/x/{imdbId}.json");
             var url = Str(res?["d"]?.AsArray().FirstOrDefault(x => Str(x?["id"]) == imdbId)?["i"]?["imageUrl"]);
-            return url == null ? null : Regex.Replace(url, @"\._V1_[^/]*\.jpg$", "._V1_SX1000.jpg");
+            return url == null ? null : ImdbSizeRx().Replace(url, "._V1_SX1000.jpg");
         }
         catch { return null; }
     }

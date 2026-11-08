@@ -492,12 +492,35 @@ try {
             Stop-Haku
         }
     }
+    if (Want 'glass') {
+        # the live glass under the player bars: mpv loads glass.glsl (its renderer takes at most 16 plain float params)
+        # and Haku sends the bars' rectangles while they show. A picture of the window goes in $Out\glass.png to look at.
+        if (-not ($Media.H264 -and (Test-Path -LiteralPath $Media.H264))) { Skip 'glass' "missing $($Media.H264)" } else {
+            $mpvLog = "$TraceFile.mpv.log"
+            if (Test-Path $mpvLog) { Remove-Item $mpvLog -Force }
+            Start-Haku $Media.H264 @{ Upscale = $false } | Out-Null
+            WaitFor { (QN 'width') -gt 0 } 20 | Out-Null
+            Send '{"command":["seek",150,"absolute"]}' # past the black opening frames, so the picture shows the blur
+            Send '{"command":["set_property","pause",true]}' # the bars stay up while paused
+            Start-Sleep -Seconds 1
+            $script:opts = ''
+            $lit = WaitFor { $script:opts = Q 'glsl-shader-opts'; $script:opts -match 'a_r=[1-9]' } 8
+            Start-Sleep -Milliseconds 500
+            $rect = New-Object HakuTest.Win+R; [HakuTest.Win]::GetWindowRect($Hk.Proc.MainWindowHandle, [ref]$rect) | Out-Null
+            $bmp = New-Object System.Drawing.Bitmap ($rect.Rt - $rect.L), ($rect.B - $rect.T)
+            $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($rect.L, $rect.T, 0, 0, $bmp.Size); $g.Dispose()
+            $bmp.Save((Join-Path $Out 'glass.png'), [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+            $errors = @(Get-Content $mpvLog -ErrorAction SilentlyContinue | Select-String 'Unrecognized PARAM|too many parameters|\[e\]\[libmpv_render\]')
+            Report 'glass' ($lit -ge 0 -and $errors.Count -eq 0) "bars' rectangles sent after $lit s ($(($script:opts -split ',')[0..2] -join ',')...); mpv shader errors: $(if ($errors.Count) { $errors[0].Line } else { 'none' })"
+            Stop-Haku
+        }
+    }
 }
 finally { Stop-Haku }
 
 # ---------- the whole run ----------
 
-$stuck = if (Test-Path $TraceFile) { @(Get-Content $TraceFile) } else { @() }
+$stuck = if (Test-Path $TraceFile) { @(Get-Content $TraceFile | Where-Object { $_ -match 'UI thread stuck' }) } else { @() } # the trace also holds timing lines
 Report 'no-ui-stalls' ($stuck.Count -eq 0) $(if ($stuck.Count) { $stuck -join ' | ' } else { "the UI thread never waited 3 s or more in a draw" })
 $hangs = Hangs
 Report 'no-hangs' ($hangs.Count -eq 0) "$($hangs.Count) 'not responding' events from the test copy"

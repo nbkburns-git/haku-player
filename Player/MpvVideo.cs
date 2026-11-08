@@ -96,6 +96,13 @@ sealed class MpvVideo
         Draw(); // in this very layout pass, so the picture and the layout change together
     }
 
+    // What every Draw hands mpv: the texture to draw into, and "don't block". Made once and reused (each frame used to
+    // allocate and free two bits of native memory and a new parameter array, on the UI thread); freed in Free.
+    readonly IntPtr fboArg = Marshal.AllocHGlobal(IntPtr.Size), noWaitArg = AllocInt(0);
+    RenderParam[]? drawParamsCache;
+    RenderParam[] DrawParams => drawParamsCache ??= new[] { new RenderParam(22 /* D3D11_FBO */, fboArg), new RenderParam(12 /* BLOCK_FOR_TARGET_TIME */, noWaitArg), new RenderParam(0, IntPtr.Zero) };
+    static IntPtr AllocInt(int v) { var p = Marshal.AllocHGlobal(4); Marshal.WriteInt32(p, v); return p; }
+
     void QueueDraw()
     {
         if (Interlocked.Exchange(ref posted, 1) == 1) return;
@@ -114,18 +121,10 @@ sealed class MpvVideo
         try
         {
             if (sized) MakeTexture();
-            var fbo = Marshal.AllocHGlobal(IntPtr.Size);
-            var noWait = Marshal.AllocHGlobal(4);
-            Marshal.WriteIntPtr(fbo, tex!.NativePointer);
-            Marshal.WriteInt32(noWait, 0);
-            try
-            {
-                // don't wait here for the frame's display time: this is the UI thread (frames come when mpv asks anyway)
-                var ps = new[] { new RenderParam(22 /* D3D11_FBO */, fbo), new RenderParam(12 /* BLOCK_FOR_TARGET_TIME */, noWait), new RenderParam(0, IntPtr.Zero) };
-                Step("mpv render");
-                mpv_render_context_render(render, ps);
-            }
-            finally { Marshal.FreeHGlobal(fbo); Marshal.FreeHGlobal(noWait); }
+            // don't wait here for the frame's display time: this is the UI thread (frames come when mpv asks anyway)
+            Marshal.WriteIntPtr(fboArg, tex!.NativePointer);
+            Step("mpv render");
+            mpv_render_context_render(render, DrawParams);
             // WPF reads the texture through Direct3D 9: the frame must be finished first
             Step("wait for GPU");
             ctx!.End(doneQuery!);
@@ -141,7 +140,14 @@ sealed class MpvVideo
 
     // HAKU_TRACE=<file>: mpv writes a verbose log next to it, and a watchdog notes where the UI thread is stuck in Draw
     // (for hunting freezes; off normally).
-    static readonly string? Trace = Environment.GetEnvironmentVariable("HAKU_TRACE") is { Length: > 0 } t ? t : null;
+    internal static readonly string? Trace = Environment.GetEnvironmentVariable("HAKU_TRACE") is { Length: > 0 } t ? t : null;
+
+    // A timing line in the HAKU_TRACE file (tests and measuring; nothing is written normally).
+    internal static void Note(string what)
+    {
+        if (Trace == null) return;
+        try { System.IO.File.AppendAllText(Trace, $"{DateTime.Now:HH:mm:ss.fff} {what}\n"); } catch { }
+    }
     static volatile string? step;
     static long stepAt;
     static Thread? watchdog;
@@ -215,6 +221,7 @@ sealed class MpvVideo
         Image.Lock(); Image.SetBackBuffer(D3DResourceType.IDirect3DSurface9, IntPtr.Zero); Image.Unlock();
         surf?.Dispose(); tex9?.Dispose(); tex?.Dispose();
         doneQuery?.Dispose(); ctx?.Dispose(); dev?.Dispose(); dev9?.Dispose(); d9?.Dispose();
+        Marshal.FreeHGlobal(fboArg); Marshal.FreeHGlobal(noWaitArg);
     }
 
     void Set(string name, string value)

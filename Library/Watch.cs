@@ -54,22 +54,32 @@ static class Watch
     static string? tickPath;
     static double tickPos = -1;
 
+    // "2026-11-06": Tick runs every video frame, so the day's text is made once a day, not ~30 times a second
+    static DateTime dayOf;
+    static string dayKey = "";
+    static string DayKey(DateTime now)
+    {
+        if (now.Date != dayOf) { dayOf = now.Date; dayKey = now.ToString("yyyy-MM-dd"); }
+        return dayKey;
+    }
+
     // Called with every position update while something plays.
     public static void Tick(string path, double pos, double dur, double? endingStart)
     {
         if (dur <= 0) return;
         if (!Data.Files.TryGetValue(path, out var r)) Data.Files[path] = r = new WatchRec();
         double step = tickPath == path ? pos - tickPos : 0;
+        var now = DateTime.Now;
         if (step is > 0 and < 2.5) // normal playback (any speed); seeks are bigger jumps
         {
             r.Seconds += step;
-            var day = DateTime.Now.ToString("yyyy-MM-dd");
+            var day = DayKey(now);
             Data.Days[day] = Data.Days.GetValueOrDefault(day) + step;
         }
         tickPath = path; tickPos = pos;
         double at = DoneAt(dur, endingStart);
         bool crossed = r.Pos < at && pos >= at;
-        r.Pos = pos; r.Dur = dur; r.Last = DateTime.Now;
+        r.Pos = pos; r.Dur = dur; r.Last = now;
         if (crossed) { r.Plays++; if (!r.Done) { r.Done = true; Changed?.Invoke(); } }
         SaveSoon();
     }

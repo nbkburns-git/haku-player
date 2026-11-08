@@ -28,7 +28,7 @@ public record Video(string Path, string Title, int N, int Season = 0, int Ep = 0
 {
     public string Num => (Ep > 0 ? Ep : N).ToString("00");
     // with the episode code, for places without a season/number column (player title bar, Continue watching)
-    public string Label => Season >= 0 && Ep > 0 && !Regex.IsMatch(Title, @"\bS\d+\s*[-–]?\s*E\d+", RegexOptions.IgnoreCase)
+    public string Label => Season >= 0 && Ep > 0 && !MainWindow.EpisodeCodeRx().IsMatch(Title)
         ? $"S{Math.Max(1, Season):00}E{Ep:00} · {Title}" : Title;
 }
 
@@ -63,8 +63,9 @@ public partial class MainWindow : Window
         Environment.GetEnvironmentVariable("HAKU_TEST_WINDOW")?.Split(',') is { Length: 4 } p && p.All(x => int.TryParse(x, out _))
             ? (int.Parse(p[0]), int.Parse(p[1]), int.Parse(p[2]), int.Parse(p[3])) : null;
     void Front() { if (TestWindow == null) Activate(); }
-    static readonly string[] VideoExt = { ".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v" };
-    static readonly string[] CoverExt = { ".png", ".jpg", ".jpeg", ".webp", ".bmp" };
+    static readonly System.Collections.Frozen.FrozenSet<string>.AlternateLookup<ReadOnlySpan<char>> CoverExt =
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { ".png", ".jpg", ".jpeg", ".webp", ".bmp" }, StringComparer.OrdinalIgnoreCase)
+            .GetAlternateLookup<ReadOnlySpan<char>>();
     static readonly string DataDir = Settings.DataDir; // %LOCALAPPDATA%\Haku Player
     public static readonly string GlassShader = Path.Combine(AppContext.BaseDirectory, "Assets", "glass.glsl");
 
@@ -84,7 +85,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Loaded += async (_, _) => await LoadLibrary();
+        // the scan starts now, while the window is still being built and shown, instead of once it has loaded
+        var scan = Task.Run(ScanAll);
+        Loaded += async (_, _) => await LoadLibrary(scan);
         AllowDrop = true; // drop videos anywhere to play them (DropPlay.cs)
         DragEnter += OnDragFilesEnter; DragOver += OnDragFiles; Drop += OnDropFiles;
         LocationChanged += (_, _) => PlaceControls();
@@ -402,6 +405,7 @@ public partial class MainWindow : Window
         foreach (var c0 in blobClocks) c0.End();
         blobClocks.Clear();
         Blobs.Children.Clear();
+        blobAt.Clear();
         var (ta, tb, tc) = Theme.Colors(Settings.Current.Theme);
         var blobs = new (Color Color, double X, double Y, double Dx, double Dy, double Secs)[]
         {
@@ -429,10 +433,19 @@ public partial class MainWindow : Window
             blobClocks.Add(new Drift(tt, TranslateTransform.XProperty, ax));
             blobClocks.Add(new Drift(tt, TranslateTransform.YProperty, ay));
             Blobs.Children.Add(e);
-            void Place() { Canvas.SetLeft(e, b.X * Blobs.ActualWidth - 200); Canvas.SetTop(e, b.Y * Blobs.ActualHeight - 200); }
-            Place();
-            Blobs.SizeChanged += (_, _) => Place();
+            Canvas.SetLeft(e, b.X * Blobs.ActualWidth - 200); Canvas.SetTop(e, b.Y * Blobs.ActualHeight - 200);
+            blobAt[e] = new Point(b.X, b.Y);
         }
+        if (!blobsPlaced) { blobsPlaced = true; Blobs.SizeChanged += (_, _) => PlaceBlobs(); }
+    }
+
+    // Each glow's place as a fraction of the window. One resize handler for all of them: MakeBlobs runs again on every
+    // theme change, and each run used to add three more handlers that kept placing glows no longer on screen.
+    readonly Dictionary<UIElement, Point> blobAt = new();
+    bool blobsPlaced;
+    void PlaceBlobs()
+    {
+        foreach (var (e, at) in blobAt) { Canvas.SetLeft(e, at.X * Blobs.ActualWidth - 200); Canvas.SetTop(e, at.Y * Blobs.ActualHeight - 200); }
     }
 
     // Keep the control-bar window glued to the bottom of the video area.
@@ -444,13 +457,17 @@ public partial class MainWindow : Window
 
     // ---------- Library ----------
 
-    async Task LoadLibrary()
+    async Task LoadLibrary(Task<Dictionary<string, List<Entry>>> scan)
     {
-        lib = await Task.Run(ScanAll);
+        var sw = Stopwatch.StartNew();
+        lib = await scan;
+        long scanned = sw.ElapsedMilliseconds;
         Watch.Seed(Everything(lib).Where(e => e.Unit != "themes").SelectMany(e => e.Videos)); // first run: resume points mpv already saved
         ApplyLibrary();
         StartWatcher();
         HideSplash();
+        MpvVideo.Note($"startup: library scan {scanned} ms, home built {sw.ElapsedMilliseconds - scanned} ms, " +
+                      $"{(DateTime.Now - Process.GetCurrentProcess().StartTime).TotalMilliseconds:0} ms since launch, {Everything(lib).Count()} shows");
         if (ArgFile != null && IsVideo(ArgFile)) PlayFiles(new() { Path.GetFullPath(ArgFile) });
         ListenForOpens();
         _ = PrefetchDetails(); // details, banners and missing covers for anything new
@@ -563,37 +580,10 @@ public partial class MainWindow : Window
     // every show once, even when it's in more than one library
     static IEnumerable<Entry> Everything(Dictionary<string, List<Entry>> l) => l.Values.SelectMany(x => x).DistinctBy(e => (e.Folder, e.Unit));
 
-    static readonly RegexOptions I = RegexOptions.IgnoreCase;
 
-    // "Game.of.Thrones.Season.1-8.COMPLETE.1080p…" -> ("Game of Thrones", null); "Hellboy (2004) [1080p]" -> ("Hellboy", 2004).
-    // Cuts at the first year, season marker or release tag that isn't at the very start.
-    public static (string Title, int? Year) CleanTitle(string raw) => CleanTitle(raw, true);
-
-    // keepRaw: when nothing is left after cleaning, return the input (a name) or "" (an episode's leftover tags)
-    static (string Title, int? Year) CleanTitle(string raw, bool keepRaw)
-    {
-        var s = Regex.Replace(raw, @"^www\.\S+\s*-\s*", "", I);          // "www.UIndex.org - Sinners 2025…"
-        s = Regex.Replace(s, @"\[[^\]]*\]", " ").Replace('.', ' ').Replace('_', ' ');
-        var cut = Regex.Matches(s, @"\(?\b(19|20)\d\d\b\)?|\bS\d{1,2}(E\d+)?\b|\bSeasons?\b|\b(2160p|1080p|720p|480p|4K|UHD|Blu-?Ray|BDRip|BRRip|WEB(-?DL|-?Rip)?|HDR|x26[45]|HEVC|Mp4|Complete|REMUX|MULTi|RERIP|REMASTERED|DVDRip)\b", I)
-            .FirstOrDefault(m => m.Index > 0);
-        int? year = Regex.Matches(s, @"\b(19|20)\d\d\b").FirstOrDefault(m => m.Index > 0) is { } y && (cut == null || y.Index <= cut.Index + 1) ? int.Parse(y.Value) : null;
-        var title = Regex.Replace(cut != null ? s[..cut.Index] : s, @"\s+", " ").Trim(' ', '-', '(', '+');
-        return (title.Length > 0 || !keepRaw ? title : raw, year);
-    }
 
     // Videos in a folder, without sample clips.
-    static IEnumerable<string> VideosIn(string dir) => Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories)
-        .Where(f => VideoExt.Contains(Path.GetExtension(f).ToLowerInvariant()) && !Regex.IsMatch(Path.GetFileNameWithoutExtension(f), @"\bsample\b", I));
-
-    // Season/episode from "S01E02" or ".../Season 1/... Episode 02", for ordering a show split over folders.
-    static (int S, int E) EpisodeOrder(string f)
-    {
-        if (Regex.IsMatch(Path.GetDirectoryName(f) ?? "", @"\\(Extras?|Featurettes?|Bonus|Specials? Features?|Behind The Scenes)(\\|$)", I)) return (int.MaxValue, 0); // bonus clips after the episodes
-        var n = Path.GetFileNameWithoutExtension(f);
-        if (Regex.Match(n, @"S(\d{1,2})\s*[-–]?\s*E(\d{1,3})", I) is { Success: true } m) return (int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value));
-        int season = Regex.Match(f, @"Season[ ._]?(\d+)", I) is { Success: true } sm ? int.Parse(sm.Groups[1].Value) : 0;
-        return Regex.Match(n, @"(?:Episode|Ep)[ ._]?(\d+)", I) is { Success: true } em ? (season, int.Parse(em.Groups[1].Value)) : (season, 999);
-    }
+    static IEnumerable<string> VideosIn(string dir) => Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Where(IsVideo);
 
     // Official episode names (from the show's details) in place of the file names. Only in the app: files aren't renamed.
     // A file with no season ("Episode 03") is matched to season 1, not to specials (season 0).
@@ -607,21 +597,12 @@ public partial class MainWindow : Window
         }
     }
 
-    static Video WithSeason(Video v)
-    {
-        var (s, e) = EpisodeOrder(v.Path);
-        return v with { Season = s == int.MaxValue ? -1 : s, Ep = s == int.MaxValue || e == 999 ? 0 : e };
-    }
+    static Video WithSeason(Video v) => WithOrder(v, EpisodeOrder(v.Path));
 
-    // "Rick and Morty - S08E01 - Summer of All Fears" -> "S08E01 · Summer of All Fears"; "Curb.Your.Enthusiasm.S01E01.1080p…" -> "S01E01"
-    static string EpisodeTitle(string f)
+    static Video WithOrder(Video v, (int S, int E) order)
     {
-        var n = Path.GetFileNameWithoutExtension(f);
-        var m = Regex.Match(n, @"S(\d{1,2})\s*[-–]?\s*E(\d{1,3})", I);
-        if (!m.Success) return Regex.Match(n, @"Episode[ ._]?\d+", I) is { Success: true } em ? em.Value : CleanTitle(n).Title;
-        var rest = CleanTitle(" " + n[(m.Index + m.Length)..], false).Title.Trim(' ', '-');
-        var code = $"S{int.Parse(m.Groups[1].Value):00}E{int.Parse(m.Groups[2].Value):00}";
-        return rest.Length > 1 ? $"{code} · {rest}" : code;
+        var (s, e) = order;
+        return v with { Season = s == int.MaxValue ? -1 : s, Ep = s == int.MaxValue || e == 999 ? 0 : e };
     }
 
     // TV shows: show folders found by Crawl (any depth), plus loose episodes grouped by show; seasons of the same show
@@ -637,8 +618,9 @@ public partial class MainWindow : Window
             .Select(g =>
             {
                 var parts = g.OrderBy(x => x.Files != null).ThenBy(x => Path.GetFileName(x.Folder), Natural.I).ToList(); // real folders first
-                var videos = parts.SelectMany(x => x.Files ?? VideosIn(x.Folder)).Distinct(StringComparer.OrdinalIgnoreCase).OrderBy(EpisodeOrder).ThenBy(f => f, Natural.I)
-                    .Select((f, i) => WithSeason(new Video(f, EpisodeTitle(f), i + 1))).ToList();
+                var videos = parts.SelectMany(x => x.Files ?? VideosIn(x.Folder)).Distinct(StringComparer.OrdinalIgnoreCase)
+                    .Select(f => (File: f, Order: EpisodeOrder(f))).OrderBy(x => x.Order).ThenBy(x => x.File, Natural.I)
+                    .Select((x, i) => WithOrder(new Video(x.File, EpisodeTitle(x.File), i + 1), x.Order)).ToList();
                 var e = new Entry(g.Key, null, videos, "episodes", false, parts[0].Folder, "tv");
                 NameEpisodes(e);
                 return e with { Cover = LoadCover(parts[0].Folder) ?? LoadCoverFile(CoverFile(e.InfoKey)) };
@@ -664,7 +646,7 @@ public partial class MainWindow : Window
     }
 
     // Covers fetched for TV shows and movies live in the app's data folder (nothing is written into your media folders).
-    public static string CoverFile(string infoKey) => Path.Combine(DataDir, "covers", Regex.Replace(infoKey, @"[^\w]+", "_") + ".jpg");
+    public static string CoverFile(string infoKey) => Path.Combine(DataDir, "covers", SafeName(infoKey) + ".jpg");
 
     // Anime shows ("episodes") and openings / endings ("themes"): show folders found by Crawl, plus loose files grouped by show.
     static List<Entry> Scan(string dir, string unit)
@@ -686,20 +668,53 @@ public partial class MainWindow : Window
     static ImageSource? LoadCover(string dir)
     {
         if (!Directory.Exists(dir)) return null;
-        foreach (var name in new[] { "cover", "poster", "folder" })
-            if (Directory.EnumerateFiles(dir, name + ".*").FirstOrDefault(p => CoverExt.Contains(Path.GetExtension(p).ToLowerInvariant())) is string f) return LoadCoverFile(f);
-        return null;
+        // one listing of the folder (it was listed once per name): the first cover.*, else poster.*, else folder.*
+        string? best = null; int rank = int.MaxValue;
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir))
+            {
+                var n = Path.GetFileName(f.AsSpan());
+                if (!CoverExt.Contains(Path.GetExtension(n))) continue;
+                int r = n.StartsWith("cover.", StringComparison.OrdinalIgnoreCase) ? 0
+                      : n.StartsWith("poster.", StringComparison.OrdinalIgnoreCase) ? 1
+                      : n.StartsWith("folder.", StringComparison.OrdinalIgnoreCase) ? 2 : int.MaxValue;
+                if (r < rank) { rank = r; best = f; if (r == 0) break; }
+            }
+        }
+        catch { return null; }
+        return LoadCoverFile(best);
     }
+
+    // A cover at card size (420 px wide, 2x the card). Most covers are big PNGs (up to 2047x2894, ~0.5 MB), and a PNG
+    // can't be decoded at a smaller size: every start decoded each one in full and shrank it, ~2.4 s of CPU for 176 covers
+    // (the bulk of the library scan). So the shrunk copy is kept in the app's data folder (covers-small) and read from then on.
+    // Its name comes from the cover's path, size and time, so a replaced cover gets a new copy.
+    static readonly string SmallCovers = Path.Combine(DataDir, "covers-small");
 
     static ImageSource? LoadCoverFile(string? f)
     {
-        if (f == null || !File.Exists(f)) return null;
+        if (f == null) return null;
+        var fi = new FileInfo(f);
+        if (!fi.Exists) return null;
+        var key = Convert.ToHexString(System.Security.Cryptography.SHA1.HashData(Encoding.UTF8.GetBytes($"{fi.FullName}|{fi.Length}|{fi.LastWriteTimeUtc.Ticks}")))[..16];
+        var jpg = Path.Combine(SmallCovers, key + ".jpg");
+        var png = Path.Combine(SmallCovers, key + ".png"); // covers with see-through parts keep them
+        if (DecodeImage(File.Exists(jpg) ? jpg : File.Exists(png) ? png : null, 0) is { } small) return small;
+        var full = DecodeImage(f, 420);
+        if (full is BitmapSource bmp) SaveSmallCover(bmp, jpg, png);
+        return full;
+    }
+
+    static BitmapSource? DecodeImage(string? f, int width)
+    {
+        if (f == null) return null;
         try
         {
             var bi = new BitmapImage();
             bi.BeginInit();
             bi.UriSource = new Uri(f);
-            bi.DecodePixelWidth = 420;              // 2x card width; keeps memory low for big PNGs
+            if (width > 0) bi.DecodePixelWidth = width;
             bi.CreateOptions = BitmapCreateOptions.IgnoreImageCache; // WPF caches by path: a replaced cover would keep showing the old picture
             bi.CacheOption = BitmapCacheOption.OnLoad; // don't lock the file, so covers can be replaced while open
             bi.EndInit();
@@ -709,20 +724,20 @@ public partial class MainWindow : Window
         catch { return null; } // unreadable cover -> placeholder
     }
 
-    // "CodeGeassR2-OP1-Encoded.23.976fps..." -> "Code Geass R2 – OP1"; "[Grp] Show S01 - E01 [1080p]-Encoded..." -> "Show S01 - E01"
-    public static string Friendly(string path)
+    static void SaveSmallCover(BitmapSource bmp, string jpg, string png)
     {
-        var n = Path.GetFileNameWithoutExtension(path);
-        var i = n.IndexOf("-Encoded", StringComparison.OrdinalIgnoreCase);
-        if (i > 0) n = n[..i];
-        n = Regex.Replace(n, @"\[[^\]]*\]", "");
-        n = Regex.Replace(n, @"-(NC|BD|DVD)\w*$", "").Trim(' ', '-', '_', '.');
-        if (!n.Contains(' ')) // AnimeThemes-style basename
+        try
         {
-            n = Regex.Replace(n, @"(?<=[a-z])(?=[A-Z0-9])|(?<=\d)(?=[A-Z][a-z])", " ");
-            n = Regex.Replace(n, @"-(?=(OP|ED)\d)", " – ");
+            bool alpha = bmp.Format.Masks.Count == 4 || bmp.Format == PixelFormats.Bgra32 || bmp.Format == PixelFormats.Pbgra32;
+            BitmapEncoder enc = alpha ? new PngBitmapEncoder() : new JpegBitmapEncoder { QualityLevel = 92 };
+            enc.Frames.Add(BitmapFrame.Create(bmp));
+            Directory.CreateDirectory(SmallCovers);
+            var target = alpha ? png : jpg;
+            var tmp = target + "." + Environment.CurrentManagedThreadId + ".tmp"; // scans run in parallel
+            using (var s = File.Create(tmp)) enc.Save(s);
+            File.Move(tmp, target, true);
         }
-        return n;
+        catch { } // no copy: decoded from the original again next time
     }
 
     // ---------- Home ----------
@@ -842,11 +857,14 @@ public partial class MainWindow : Window
 
     void OpenShow(Entry entry)
     {
+        var sw = MpvVideo.Trace != null ? Stopwatch.StartNew() : null;
         Detail.DataContext = entry;
         ShowEpisodes(entry, null);
         DetailStar.Content = IsFav(entry) ? "\uE735" : "\uE734";
         Show(Detail);
         _ = LoadDetailInfo(entry);
+        // timed to the first frame drawn with the page (Loaded priority runs after layout and render)
+        if (sw != null) Dispatcher.BeginInvoke(() => MpvVideo.Note($"show page: {sw.ElapsedMilliseconds} ms for '{entry.Title}' ({entry.Videos.Count} videos)"), System.Windows.Threading.DispatcherPriority.Loaded);
     }
 
     // ---------- show details (AniList) ----------
@@ -860,7 +878,7 @@ public partial class MainWindow : Window
         if (Detail.DataContext != entry || info == null) return;
 
         // other names, skipping ones that only differ from the folder name by case or punctuation
-        string N(string? t) => System.Text.RegularExpressions.Regex.Replace((t ?? "").ToLowerInvariant(), @"[^\p{L}\p{N}]", "");
+        static string N(string? t) => NotLetterOrDigitRx().Replace((t ?? "").ToLowerInvariant(), "");
         DetailAlt.Text = string.Join("  ·  ", new[] { info.Title, info.Native }
             .Where(x => !string.IsNullOrEmpty(x) && N(x) != N(entry.Name)).Distinct());
         DetailAlt.Visibility = DetailAlt.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -1131,7 +1149,7 @@ public partial class MainWindow : Window
 
     void Send(object[] command)
     {
-        try { ipc?.WriteLine(JsonSerializer.Serialize(new { command })); } catch { }
+        try { ipc?.WriteLine(MpvJson.Command(command)); } catch { }
     }
 
     // mpv's expand-text with a reply (for the debug panel). Replies come back through Listen.
@@ -1146,10 +1164,18 @@ public partial class MainWindow : Window
         int id = ++reqId;
         var tcs = new TaskCompletionSource<string?>();
         pending[id] = tcs;
-        try { ipc.WriteLine(JsonSerializer.Serialize(new { command, request_id = id })); }
+        try { ipc.WriteLine(MpvJson.Command(command, id)); }
         catch { pending.Remove(id); return Task.FromResult<string?>(null); }
-        _ = Task.Delay(1500).ContinueWith(_ => Dispatcher.Invoke(() => { if (pending.Remove(id)) tcs.TrySetResult(null); })); // no reply: give up
+        GiveUpLater(id, tcs);
         return tcs.Task;
+    }
+
+    // No reply in 1.5 s: give up. Awaited on the UI thread, where pending lives; the old ContinueWith + Dispatcher.Invoke
+    // parked a thread-pool thread on every call (the glass sends one per frame while the bars move).
+    async void GiveUpLater(int id, TaskCompletionSource<string?> tcs)
+    {
+        await Task.Delay(1500);
+        await Dispatcher.InvokeAsync(() => { if (pending.Remove(id)) tcs.TrySetResult(null); });
     }
 
     // ---------- Player (mpv inside the app, MpvVideo.cs; controlled over its JSON pipe) ----------
@@ -1377,10 +1403,12 @@ public partial class MainWindow : Window
                     waiting.TrySetResult(m.TryGetProperty("data", out var rd) && rd.ValueKind == JsonValueKind.String ? rd.GetString() : null);
                     continue;
                 }
+                // compared in place (ValueEquals): a property change arrives every video frame, and reading the event
+                // name out as a string three times per message was garbage for nothing
                 if (!m.TryGetProperty("event", out var ev)) continue;
-                if (ev.GetString() == "file-loaded") { controls?.FileLoaded(); continue; } // re-add your subtitles + timing
-                if (ev.GetString() == "playback-restart") { AiPlaybackRestart(); continue; }
-                if (ev.GetString() != "property-change") continue;
+                if (ev.ValueEquals("file-loaded")) { controls?.FileLoaded(); continue; } // re-add your subtitles + timing
+                if (ev.ValueEquals("playback-restart")) { AiPlaybackRestart(); continue; }
+                if (!ev.ValueEquals("property-change")) continue;
                 m.TryGetProperty("data", out var d);
                 switch (m.GetProperty("name").GetString())
                 {
@@ -1412,10 +1440,11 @@ public partial class MainWindow : Window
                         DiscordUpdate();
                         break;
                     case "time-pos" when d.ValueKind == JsonValueKind.Number:
-                        controls?.SetTime(d.GetDouble());
-                        if (entry.Unit != "themes" && controls is { CurrentFile.Length: > 0 } cc) Watch.Tick(cc.CurrentFile, d.GetDouble(), cc.Length, cc.EndingStart);
+                        double t = d.GetDouble();
+                        controls?.SetTime(t);
+                        if (entry.Unit != "themes" && controls is { CurrentFile.Length: > 0 } cc) Watch.Tick(cc.CurrentFile, t, cc.Length, cc.EndingStart);
                         // Discord's "time left" is worked out from timestamps: refresh it after a seek
-                        if (controls is { Paused: false } pc && Math.Abs(d.GetDouble() - (discordPos + (DateTime.UtcNow - discordAt).TotalSeconds * pc.Speed)) > 5) DiscordUpdate();
+                        if (controls is { Paused: false } pc && Math.Abs(t - (discordPos + (DateTime.UtcNow - discordAt).TotalSeconds * pc.Speed)) > 5) DiscordUpdate();
                         break;
                     case "duration" when d.ValueKind == JsonValueKind.Number:
                         controls?.SetDuration(d.GetDouble());

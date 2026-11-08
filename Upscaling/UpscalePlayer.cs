@@ -30,8 +30,15 @@ public partial class MainWindow
         if (!aiHolding) Send(new object[] { "set_property", "pause", true });
         aiHolding = true;
         controls?.SetAiLoading(upscaleActive ? "AI buffering" : "Starting AI upscaling");
-        int id = ++aiHoldId;
-        _ = Task.Delay(12000).ContinueWith(_ => Dispatcher.Invoke(() => { if (aiHoldId == id) AiRelease(0); })); // never stuck paused
+        ReleaseLater(++aiHoldId); // never stuck paused
+    }
+
+    // 12 s on: let go if this hold is still the current one. Awaited on the UI thread (it held a thread-pool thread
+    // blocked in Dispatcher.Invoke before).
+    async void ReleaseLater(int id)
+    {
+        await Task.Delay(12000);
+        if (aiHoldId == id) AiRelease(0);
     }
 
     async void AiRelease(int afterMs)

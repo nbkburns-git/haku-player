@@ -25,10 +25,12 @@ public partial class MainWindow
     // "Code Geass R2 – OP1" -> ("Code Geass R2", "Opening 1"); "Bleach – ED12v2" -> ("Bleach", "Ending 12")
     internal static (string, string) ThemeText(string title, string show)
     {
-        var m = Regex.Match(title, @"^(.*?)\s*[–-]\s*(OP|ED)(\d*)", RegexOptions.IgnoreCase);
+        var m = ThemeTitleRx().Match(title);
         if (!m.Success) return (title, "Opening / ending");
         string kind = m.Groups[2].Value.Equals("OP", StringComparison.OrdinalIgnoreCase) ? "Opening" : "Ending";
         string name = m.Groups[1].Value.Length > 0 ? m.Groups[1].Value : show;
-        return (name, m.Groups[3].Value.Length > 0 ? $"{kind} {int.Parse(m.Groups[3].Value)}" : kind);
+        return (name, m.Groups[3].Length > 0 ? $"{kind} {int.Parse(m.Groups[3].ValueSpan)}" : kind);
     }
+
+    [GeneratedRegex(@"^(.*?)\s*[–-]\s*(OP|ED)(\d*)", RegexOptions.IgnoreCase)] private static partial Regex ThemeTitleRx();
 }

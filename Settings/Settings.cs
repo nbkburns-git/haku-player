@@ -163,6 +163,10 @@ public sealed class Settings
         return s;
     }
 
+    // One options object for every save: each new one rebuilt the serializer's whole picture of Settings by reflection
+    // (it caches that per options instance), on every star, rename or settings change.
+    static readonly JsonSerializerOptions SaveOptions = new() { WriteIndented = true };
+
     public void Save()
     {
         try
@@ -170,7 +174,7 @@ public sealed class Settings
             Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
             // write a temp file and swap it in, so a crash mid-save can't leave settings.json half-written
             var tmp = FilePath + ".tmp";
-            File.WriteAllText(tmp, JsonSerializer.Serialize(this, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(tmp, JsonSerializer.Serialize(this, SaveOptions));
             File.Move(tmp, FilePath, true);
         }
         catch { }

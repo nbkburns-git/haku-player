@@ -210,7 +210,7 @@
           <Button x:Name="MaxBtn" Style="{StaticResource Caption}" Click="OnMaximize" ToolTip="Maximize" Content="&#xE922;" Margin="4,0" AutomationProperties.Name="Header maximize"/>
           <Button Style="{StaticResource Caption}" Click="OnCloseWindow" ToolTip="Close" Content="&#xE8BB;" Tag="Close"/>
         </StackPanel>
-        <Button x:Name="BackBtn" Style="{StaticResource Back}" Click="OnBack" Visibility="Collapsed" Margin="0,0,16,0"
+        <Button x:Name="BackBtn" Style="{StaticResource Back}" Click="OnBack" Visibility="Collapsed" Margin="0,0,16,0" AutomationProperties.Name="Back"
                 VerticalAlignment="Center" WindowChrome.IsHitTestVisibleInChrome="True"/>
         <Image x:Name="Logo" Source="{DynamicResource Logo}" Width="24" Height="24" VerticalAlignment="Center" Margin="2,0,10,0" RenderOptions.BitmapScalingMode="HighQuality"/>
         <TextBlock x:Name="HeaderTitle" Text="Haku Player" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"

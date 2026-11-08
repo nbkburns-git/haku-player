@@ -134,35 +134,51 @@ public partial class PlayerControls : UserControl
         PushGlass(null, EventArgs.Empty);
     }
 
+    // Runs every screen refresh while the bars can move, and usually nothing has: the text is built in one reused
+    // buffer and only turned into a string (and sent) when it differs from the last one sent.
+    readonly System.Text.StringBuilder glassText = new(512);
+
     void PushGlass(object? s, EventArgs e)
     {
         if (!LiveGlass || Root.ActualWidth <= 0) return;
         double W = Root.ActualWidth, H = Root.ActualHeight, k = glassOff ? 0 : Root.Opacity;
         // mpv's shader only covers the picture itself, not the side/top bars around a 4:3 video,
         // so positions are given relative to the picture (else the glass is squashed into it).
-        double vw = W, vh = H, vx = 0, vy = 0;
-        if (!fill && aspect > 0) { vw = Math.Min(W, H * aspect); vh = vw / aspect; vx = (W - vw) / 2; vy = (H - vh) / 2; }
-        var sb = new System.Text.StringBuilder();
-        void Add(string n, FrameworkElement el, double radius, double alpha)
-        {
-            var ci = System.Globalization.CultureInfo.InvariantCulture;
-            if (el.Visibility != Visibility.Visible || el.ActualWidth <= 0) alpha = 0;
-            var p = alpha > 0 ? el.TranslatePoint(new Point(0, 0), Root) : new Point();
-            sb.Append(ci, $"{n}x={(p.X - vx) / vw:0.#####},{n}y={(p.Y - vy) / vh:0.#####},{n}w={el.ActualWidth / vw:0.#####},{n}h={el.ActualHeight / vh:0.#####},{n}r={radius / vh:0.#####},{n}a={alpha:0.###},");
-        }
+        var pic = new Rect(0, 0, W, H);
+        if (!fill && aspect > 0) { double vw = Math.Min(W, H * aspect), vh = vw / aspect; pic = new Rect((W - vw) / 2, (H - vh) / 2, vw, vh); }
+        var sb = glassText.Clear();
         // The blur follows the bars' own fade (SendGlass keeps mpv at most one update behind).
-        Add("a", Pill, 34, LiveAlpha(Pill) * k);
-        Add("b", TopBar, 28, LiveAlpha(TopBar) * k);
-        Add("c", Menu, 18, LiveAlpha(Menu) * k);
+        AppendGlass(sb, 'a', Pill, Root, 34, LiveAlpha(Pill) * k, pic);
+        AppendGlass(sb, 'b', TopBar, Root, 28, LiveAlpha(TopBar) * k, pic);
+        AppendGlass(sb, 'c', Menu, Root, 18, LiveAlpha(Menu) * k, pic);
         // d: the Skip / Up next card (the hover preview has no live blur: it moved too fast for mpv to follow, and is nearly all picture)
-        Add("d", Prompt, 20, LiveAlpha(Prompt) * k);
+        AppendGlass(sb, 'd', Prompt, Root, 20, LiveAlpha(Prompt) * k, pic);
         // blur strength follows the Glass setting: Clear / Balanced / Frosted
         sb.Append(System.Globalization.CultureInfo.InvariantCulture, $"gblur={(S.Glass switch { 0 => 9.0, 2 => 30.0, _ => 16.0 })}");
-        var opts = sb.ToString();
-        if (opts == lastGlass) return;
-        lastGlass = opts;
+        if (sb.Equals(lastGlass.AsSpan())) return;
+        lastGlass = sb.ToString();
         SendGlass();
     }
+
+    // One bar's rectangle for the glass shader, in 0..1 of the picture: "a_p=…,a_s=…,a_r=…," (position, size, radius
+    // and alpha). mpv's renderer for the libmpv render API takes at most 16 plain float params, so glass.glsl packs two
+    // numbers into each (Pack); a hidden bar sends zeros.
+    static void AppendGlass(System.Text.StringBuilder sb, char n, FrameworkElement el, FrameworkElement root, double radius, double alpha, Rect pic)
+    {
+        if (el.Visibility != Visibility.Visible || el.ActualWidth <= 0 || alpha <= 0)
+        {
+            sb.Append(n).Append("_p=0,").Append(n).Append("_s=0,").Append(n).Append("_r=0,");
+            return;
+        }
+        var p = el.TranslatePoint(new Point(0, 0), root);
+        sb.Append(n).Append("_p=").Append(Pack((p.X - pic.X) / pic.Width, (p.Y - pic.Y) / pic.Height)).Append(',');
+        sb.Append(n).Append("_s=").Append(Pack(el.ActualWidth / pic.Width, el.ActualHeight / pic.Height)).Append(',');
+        sb.Append(n).Append("_r=").Append(Pack(radius / pic.Height, Math.Min(alpha, 1))).Append(',');
+    }
+
+    // Two numbers in -1..2 as one whole number below 2^24, so a float carries it exactly (unpacked in glass.glsl).
+    internal static long Pack(double u, double v) =>
+        (long)Math.Round((Math.Clamp(u, -1, 2) + 1) / 3 * 4095) * 4096 + (long)Math.Round((Math.Clamp(v, -1, 2) + 1) / 3 * 4095);
 
     // mpv applies these about once per video frame. Sent every screen refresh they queued up and the blur ran
     // ~0.4 s behind the bars (the "ghost bar"), so only one is in flight at a time and the newest goes next.
@@ -516,9 +532,13 @@ public partial class PlayerControls : UserControl
         double knobEdge = x + Knob.Width, tip = aiCap > 0 ? 24.0 * aiFrames / aiCap : 0;
         AiFill.Width = aiUntil >= 0 && duration > 0 ? Math.Min(w, Math.Max(Math.Round(Math.Clamp(aiUntil / duration, 0, 1) * w), Math.Round(knobEdge + tip))) : 0;
         Knob.Margin = new Thickness(x, 0, 0, 0);
-        Current.Text = Fmt(time);
-        Duration.Text = Fmt(duration);
+        // the clock text changes once a second, but this runs every frame: only format it when the shown second moves
+        int now = (int)Math.Max(0, time), all = (int)Math.Max(0, duration);
+        if (now != shownNow) { shownNow = now; Current.Text = Fmt(time); }
+        if (all != shownAll) { shownAll = all; Duration.Text = Fmt(duration); }
     }
+
+    int shownNow = -1, shownAll = -1;
 
     public static string Fmt(double s)
     {

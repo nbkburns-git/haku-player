@@ -45,9 +45,15 @@ launch hands the path to that window over a named pipe and quits (`App.xaml.cs`)
 The glass over the video is two layers:
 
 1. **WPF** draws the tint, which adapts to how bright the scene is, plus the sheen, the specular rims and the shadow (`GlassSurface.cs`).
-2. **mpv** blurs the actual moving picture underneath (`Assets/glass.glsl`). A libplacebo `OUTPUT` hook takes up to four rounded rectangles: the bottom pill, the top bar, a menu, and the Skip/Up next card. Inside each one it applies a 48-tap golden-angle blur, a saturation and brightness lift, and a lens-like bend near the edge.
+2. **mpv** blurs the actual moving picture underneath (`Assets/glass.glsl`). An `OUTPUT` hook takes up to four rounded rectangles: the bottom pill, the top bar, a menu, and the Skip/Up next card. Inside each one it applies a 48-tap golden-angle blur, a saturation and brightness lift, and a lens-like bend near the edge.
 
-The app tells the shader where the rectangles are with `glsl-shader-opts`, in the picture's own coordinates. That way 4:3 video with side bars still lines up. A `//!WHEN` condition switches the whole pass off while every rectangle is invisible.
+The app tells the shader where the rectangles are with `glsl-shader-opts`, in the picture's own coordinates. That way 4:3 video with side bars still lines up.
+
+The libmpv render API uses mpv's own renderer, not libplacebo's, which limits shader params. It takes only plain `float` params (no `DYNAMIC`) and at most 16 per shader. So each param carries two numbers, packed as one whole number below 2^24 (`PlayerControls.Pack`, unpacked in the shader). Each rectangle uses three params: `_p` (x, y), `_s` (w, h) and `_r` (radius, alpha). A hidden one sends zeros. The values are uniforms, so moving the bars doesn't recompile anything: it costs about 0.5 ms a frame while they move.
+
+Until 2026-11-08 the shader still used the libplacebo-only form, and mpv silently refused to load it ("Unrecognized PARAM TYPE"). The `glass` test in `tests\app-tests.ps1` checks that mpv loads it.
+
+`gpq = 1` is for HDR output (PQ / BT.2020, see `docs/winui3-migration-plan.md`). The shader then works on SDR-like values, so the glass looks the same as in SDR. Haku's WPF window is SDR only and leaves it at 0.
 
 ### Why fades are drawn by one renderer
 

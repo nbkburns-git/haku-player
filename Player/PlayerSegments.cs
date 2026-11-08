@@ -26,7 +26,21 @@ public partial class PlayerControls
     TextBlock? countdownText;
 
     // where this video counts as watched (the ending's start), when known
-    public double? EndingStart => segments.FirstOrDefault(s => s.Kind == "ed")?.Start;
+    public double? EndingStart => FindSegment(s => s.Kind == "ed")?.Start;
+
+    // Segment lookups run with every position update (each video frame): a plain loop over the few segments,
+    // where LINQ's FirstOrDefault allocated an enumerator, and a closure too when the test used the time.
+    Segment? FindSegment(Func<Segment, bool> match)
+    {
+        foreach (var s in segments) if (match(s)) return s;
+        return null;
+    }
+
+    Segment? SegmentAt(double t, double endPad = 0)
+    {
+        foreach (var s in segments) if (t >= s.Start && t < s.End - endPad) return s;
+        return null;
+    }
 
     public void SetChapters(List<Chapter> c) { chapters = c; DrawMarks(); }
     public void SetSegments(List<Segment> s) { segments = s; DrawMarks(); UpdatePrompt(); }
@@ -67,16 +81,18 @@ public partial class PlayerControls
     // for the hover preview: "Opening", or the chapter's own name
     string MarkLabel(double t)
     {
-        if (segments.FirstOrDefault(s => t >= s.Start && t < s.End) is { } seg) return KindName(seg.Kind);
+        if (SegmentAt(t) is { } seg) return KindName(seg.Kind);
         var c = chapters.LastOrDefault(x => x.Time <= t);
-        return c != null && c.Title.Length > 0 && !Regex.IsMatch(c.Title, @"^(Chapter\s*)?\d+$", RegexOptions.IgnoreCase) ? c.Title : "";
+        return c != null && c.Title.Length > 0 && !NumberedChapterRx().IsMatch(c.Title) ? c.Title : "";
     }
+
+    [GeneratedRegex(@"^(Chapter\s*)?\d+$", RegexOptions.IgnoreCase)] private static partial Regex NumberedChapterRx();
 
     // Runs with every position update (also while the controls are hidden).
     void UpdatePrompt()
     {
         if (duration <= 0) { SetPrompt("", null); return; }
-        var seg = segments.FirstOrDefault(s => time >= s.Start && time < s.End - 0.5);
+        var seg = SegmentAt(time, endPad: 0.5);
         if (S.AutoSkip && seg is { Kind: "op" or "recap" } && autoSkipped.Add(seg)) { Seek(seg.End, "absolute+exact"); return; }
 
         // Up next: from the start of the ending (or the last 20 s when there's no ending known), counting down with playback

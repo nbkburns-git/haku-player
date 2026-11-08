@@ -16,35 +16,43 @@ namespace AnimePlayer;
 public partial class MainWindow
 {
     const int CrawlDepth = 6;
-    static readonly Regex PureSeason = new(@"^(?:(?:season|series|staffel|saison|temporada|s)[\s._-]*)?\d{1,3}$|^(?:season|series)\s*\d+\b|^(?:specials?|extras?|featurettes?|bonus(?: features)?|behind the scenes|deleted scenes|interviews|ovas?|oads?|movies?|subs?|subtitles|nc(?:op|ed)s?|creditless)$|^(?:disc|disk|cd|part|vol(?:ume)?)[\s._-]*\d+$", RegexOptions.IgnoreCase);
-    static readonly Regex Letters = new(@"^(?:[a-z0-9#]|[a-z0-9]\s*[-–]\s*[a-z0-9]|#-9)$", RegexOptions.IgnoreCase);
-    static readonly Regex SeasonMark = new(@"\b(?:S\d{1,2}|Season\s*\d+)\b", RegexOptions.IgnoreCase);
-    static readonly string[] Markers = { "cover.*", "poster.*", "folder.*", "tvshow.nfo", "movie.nfo", "anilist.txt" };
+    [GeneratedRegex(@"^(?:(?:season|series|staffel|saison|temporada|s)[\s._-]*)?\d{1,3}$|^(?:season|series)\s*\d+\b|^(?:specials?|extras?|featurettes?|bonus(?: features)?|behind the scenes|deleted scenes|interviews|ovas?|oads?|movies?|subs?|subtitles|nc(?:op|ed)s?|creditless)$|^(?:disc|disk|cd|part|vol(?:ume)?)[\s._-]*\d+$", IC)]
+    private static partial Regex PureSeason();
+    [GeneratedRegex(@"^(?:[a-z0-9#]|[a-z0-9]\s*[-–]\s*[a-z0-9]|#-9)$", IC)] private static partial Regex Letters();
+    [GeneratedRegex(@"\b(?:S\d{1,2}|Season\s*\d+)\b", IC)] private static partial Regex SeasonMark();
+    [GeneratedRegex(@"^(?:samples?|trailers?)$", IC)] private static partial Regex ExtraDirRx();
+    [GeneratedRegex(@"\b(?:part|pt|cd|disc|disk)[\s._-]*\d\b", IC)] private static partial Regex PartRx();
 
-    static bool IsVideo(string f) => VideoExt.Contains(Path.GetExtension(f).ToLowerInvariant()) && !Regex.IsMatch(Path.GetFileNameWithoutExtension(f), @"\bsample\b", I);
-    static bool SkipDir(string d) => Path.GetFileName(d) is var n && (n.StartsWith('.') || n.StartsWith('$') || n is "System Volume Information" or "@eaDir" || Regex.IsMatch(n, @"^(?:samples?|trailers?)$", I));
+    static bool SkipDir(string d) => Path.GetFileName(d) is var n && (n.StartsWith('.') || n.StartsWith('$') || n is "System Volume Information" or "@eaDir" || ExtraDirRx().IsMatch(n));
     static string[] Dirs(string d) { try { return Directory.GetDirectories(d).Where(x => !SkipDir(x)).ToArray(); } catch { return Array.Empty<string>(); } }
     static List<string> Files(string d) { try { return Directory.GetFiles(d).Where(IsVideo).ToList(); } catch { return new(); } }
     static bool HasVideos(string d) { try { return Directory.EnumerateFiles(d, "*", SearchOption.AllDirectories).Any(IsVideo); } catch { return false; } }
-    static bool HasMarker(string d) { try { return Markers.Any(m => Directory.EnumerateFiles(d, m).Any()); } catch { return false; } }
-    static string Norm(string s) => Regex.Replace(s.ToLowerInvariant(), "[^a-z0-9]", "");
-    static bool IsSeasonName(string d) => PureSeason.IsMatch(Path.GetFileName(d).Trim());
+    static bool IsSeasonName(string d) => PureSeason().IsMatch(Path.GetFileName(d.AsSpan()).Trim());
 
-    // the show's name from an episode file: "[Grp] Naruto - 012 [1080p]" -> "Naruto", "Rick.and.Morty.S01E02…" -> "Rick and Morty"
-    public static string ShowGuess(string file, bool theme = false)
+    // cover.* / poster.* / folder.* / tvshow.nfo / movie.nfo / anilist.txt: one listing of the folder, not one per name
+    static bool HasMarker(string d)
     {
-        if (theme) return Friendly(file).Split(" – ")[0].Trim();
-        var n = Regex.Replace(Path.GetFileNameWithoutExtension(file), @"\[[^\]]*\]", " ");
-        var m = Regex.Match(n, @"S\d{1,2}\s*[-–]?\s*E\d{1,3}|\b\d{1,2}x\d{2,3}\b|\b(?:Episode|Ep|E)[\s._-]?\d{1,4}\b|\s[-–]\s*\d{1,4}\b|[\s._]\d{2,4}(?=\s*(?:\(|v\d|$))", I);
-        return CleanTitle(m.Success ? n[..m.Index] : n, false).Title.Trim(' ', '-', '–', '.', '_');
+        try { return Directory.EnumerateFiles(d).Any(f => IsMarker(Path.GetFileName(f.AsSpan()))); }
+        catch { return false; }
+
+        // "cover.*" as Windows reads it: "cover", or "cover." followed by anything
+        static bool Stem(ReadOnlySpan<char> n, string stem) =>
+            n.StartsWith(stem, StringComparison.OrdinalIgnoreCase) && (n.Length == stem.Length || n[stem.Length] == '.');
+        static bool IsMarker(ReadOnlySpan<char> n) =>
+            Stem(n, "cover") || Stem(n, "poster") || Stem(n, "folder") ||
+            n.Equals("tvshow.nfo", StringComparison.OrdinalIgnoreCase) || n.Equals("movie.nfo", StringComparison.OrdinalIgnoreCase) || n.Equals("anilist.txt", StringComparison.OrdinalIgnoreCase);
     }
 
+    // a folder's name as compared with its sub-folders: "Rick.and.Morty.S01.1080p" -> "rickandmorty"
+    static string FolderKey(string d) => Norm(CleanTitle(Path.GetFileName(d)).Title);
+
     // a folder inside a show that belongs to it: "Season 2", "S01", "Specials", or the show's own name ("Rick.and.Morty.S03…", "Code Geass R2")
-    static bool PartOf(string show, string child)
+    // p: the show's FolderKey, worked out once for all its sub-folders
+    static bool PartOf(string p, string child)
     {
         if (IsSeasonName(child)) return true;
-        string p = Norm(CleanTitle(Path.GetFileName(show)).Title), c = Norm(CleanTitle(Path.GetFileName(child)).Title);
-        return p.Length > 0 && (c == p || (Math.Min(p.Length, c.Length) >= 4 && (c.StartsWith(p) || p.StartsWith(c)))); // "A" isn't part of "Archer"
+        string c = FolderKey(child);
+        return p.Length > 0 && (c == p || (Math.Min(p.Length, c.Length) >= 4 && (c.StartsWith(p, StringComparison.Ordinal) || p.StartsWith(c, StringComparison.Ordinal)))); // "A" isn't part of "Archer"
     }
 
     // does this folder look like one show (or a season of one)?
@@ -52,19 +60,21 @@ public partial class MainWindow
     {
         if (HasMarker(d) || Dirs(d).Any(IsSeasonName)) return true;
         var name = Path.GetFileName(d);
-        if (SeasonMark.IsMatch(name) && CleanTitle(name).Title.Length > 0) return true; // "Rick.and.Morty.S01.1080p"
+        var title = CleanTitle(name).Title;
+        if (SeasonMark().IsMatch(name) && title.Length > 0) return true; // "Rick.and.Morty.S01.1080p"
         var first = Files(d).FirstOrDefault();
         if (first == null) return false;
-        string g = Norm(ShowGuess(first)), n = Norm(CleanTitle(name).Title);
-        return g.Length >= 3 && n.Length >= 3 && (g.Contains(n) || n.Contains(g)); // its episodes are named after it
+        string g = Norm(ShowGuess(first)), n = Norm(title);
+        return g.Length >= 3 && n.Length >= 3 && (g.Contains(n, StringComparison.Ordinal) || n.Contains(g, StringComparison.Ordinal)); // its episodes are named after it
     }
 
     // a folder with no videos of its own: is it a folder of shows, or one show split into parts?
     static bool HoldsShows(string d, string[] subs)
     {
         if (subs.Length == 0) return false;
-        if (Letters.IsMatch(Path.GetFileName(d).Trim())) return true;
-        if (subs.Any(s => PartOf(d, s)) || HasMarker(d)) return false;
+        if (Letters().IsMatch(Path.GetFileName(d.AsSpan()).Trim())) return true;
+        var key = FolderKey(d);
+        if (subs.Any(s => PartOf(key, s)) || HasMarker(d)) return false;
         int shows = subs.Count(LooksLikeShow);
         return shows > 0 && shows * 2 >= subs.Length;
     }
@@ -76,7 +86,7 @@ public partial class MainWindow
         var sizes = vids.Select(f => { try { return new FileInfo(f).Length; } catch { return 0L; } }).ToList();
         long max = sizes.Max();
         var big = vids.Where((f, i) => max > 0 && sizes[i] >= max * 0.4).ToList();
-        return big.Count >= 2 && !big.All(f => Regex.IsMatch(Path.GetFileNameWithoutExtension(f), @"\b(?:part|pt|cd|disc|disk)[\s._-]*\d\b", I));
+        return big.Count >= 2 && !big.All(f => PartRx().IsMatch(Path.GetFileNameWithoutExtension(f.AsSpan())));
     }
 
     // Show (or movie) folders under a library folder, and the videos lying loose in folders of shows.
@@ -115,11 +125,13 @@ public partial class MainWindow
     }
 
     // Loose episodes grouped by show. Folder is a made-up path, so favourites and details still have a key for each group.
+    // Each file's show is guessed once (it was guessed again for the group's name).
     static IEnumerable<(string Name, string Folder, List<string> Files)> LooseShows(List<string> loose, bool theme) =>
-        loose.GroupBy(f => (Dir: Path.GetDirectoryName(f)!, Key: Norm(ShowGuess(f, theme)) is { Length: > 0 } k ? k : Norm(Path.GetFileName(Path.GetDirectoryName(f)!))))
+        loose.Select(f => (File: f, Dir: Path.GetDirectoryName(f)!, Guess: ShowGuess(f, theme)))
+            .GroupBy(x => (x.Dir, Key: Norm(x.Guess) is { Length: > 0 } k ? k : Norm(Path.GetFileName(x.Dir))))
             .Select(g =>
             {
-                var name = g.Select(f => ShowGuess(f, theme)).FirstOrDefault(x => x.Length > 0) ?? Path.GetFileName(g.Key.Dir);
-                return (name, Path.Combine(g.Key.Dir, "[loose] " + name), g.OrderBy(f => f, Natural.I).ToList());
+                var name = g.Select(x => x.Guess).FirstOrDefault(x => x.Length > 0) ?? Path.GetFileName(g.Key.Dir);
+                return (name, Path.Combine(g.Key.Dir, "[loose] " + name), g.Select(x => x.File).OrderBy(f => f, Natural.I).ToList());
             });
 }

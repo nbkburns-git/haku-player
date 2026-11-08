@@ -75,7 +75,9 @@ public partial class MainWindow
     {
         var q = SearchBox.Text.Trim();
         SearchHint.Visibility = q.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
-        IEnumerable<Entry> items = LibraryBase();
+        // the section's shows, sorted once: the filter bar's tag and genre chips come from the same list
+        var all = LibraryBase();
+        IEnumerable<Entry> items = all;
         if (filterFav) items = items.Where(x => !x.IsRandom && (IsFav(x) || x.Videos.Any(IsFav)));
         if (kindFilter != null) items = items.Where(x => x.Tag == kindFilter);
         if (genre != null) items = items.Where(x => InfoService.Cached(x.InfoKey)?.Genres.Contains(genre) == true);
@@ -88,7 +90,7 @@ public partial class MainWindow
             _ => items.OrderByDescending(x => x.IsRandom).ThenBy(x => x.Title, Natural.I),
         };
         Cards.ItemsSource = items.ToList();
-        BuildFilterBar();
+        BuildFilterBar(all);
     }
 
     static bool Matches(Entry x, string q)
@@ -118,7 +120,7 @@ public partial class MainWindow
         searchDelay.Start();
     }
 
-    void BuildFilterBar()
+    void BuildFilterBar(List<Entry> all)
     {
         FilterBar.Children.Clear();
         Button Chip(string text, bool on, Action click)
@@ -136,7 +138,7 @@ public partial class MainWindow
         Chip("★ Favourites", filterFav, () => filterFav = true);
         // its tags (Anime / TV shows / Movies / your own), when this library mixes them; click again to show everything
         var builtIn = LibraryFolder.Kinds.Select(k => k.Name).ToList();
-        var tags = LibraryBase().Where(x => !x.IsRandom && x.Tag.Length > 0).Select(x => x.Tag).Distinct()
+        var tags = all.Where(x => !x.IsRandom && x.Tag.Length > 0).Select(x => x.Tag).Distinct()
             .OrderBy(t => builtIn.IndexOf(t) is var i && i >= 0 ? i : 99).ThenBy(t => t, Natural.I).ToList();
         if (tags.Count > 1)
         {
@@ -148,8 +150,8 @@ public partial class MainWindow
         Chip("Newest", sortMode == "new", () => sortMode = "new");
         Chip("Top rated", sortMode == "top", () => sortMode = "top");
         // genres present in this section (from fetched details), most common first
-        var genres = LibraryBase().Select(x => InfoService.Cached(x.InfoKey)).Where(i => i != null)
-            .SelectMany(i => i!.Genres).GroupBy(g => g).OrderByDescending(g => g.Count()).Take(10).Select(g => g.Key).ToList();
+        var genres = all.Select(x => InfoService.Cached(x.InfoKey)).OfType<ShowInfo>()
+            .SelectMany(i => i.Genres).CountBy(g => g).OrderByDescending(g => g.Value).Take(10).Select(g => g.Key).ToList();
         if (genres.Count > 0)
         {
             Gap();

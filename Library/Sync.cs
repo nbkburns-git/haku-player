@@ -19,7 +19,9 @@ public partial class MainWindow
     readonly List<FileSystemWatcher> watchers = new();
     readonly DispatcherTimer syncDebounce = new() { Interval = TimeSpan.FromSeconds(3) };
     readonly DispatcherTimer toastTimer = new() { Interval = TimeSpan.FromSeconds(3.2) };
-    static readonly string[] WatchedExt = { ".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".png", ".jpg", ".jpeg", ".webp", ".bmp" };
+    static readonly System.Collections.Frozen.FrozenSet<string>.AlternateLookup<ReadOnlySpan<char>> WatchedExt =
+        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { ".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".png", ".jpg", ".jpeg", ".webp", ".bmp" }, StringComparer.OrdinalIgnoreCase)
+            .GetAlternateLookup<ReadOnlySpan<char>>();
 
     void OnSync(object s, RoutedEventArgs e) => _ = SyncLibrary(true);
 
@@ -42,8 +44,11 @@ public partial class MainWindow
             {
                 var o = Everything(old).Where(e => (e.Unit == "themes") == themes).ToList();
                 var n = Everything(fresh).Where(e => (e.Unit == "themes") == themes).ToList();
-                int newSeries = n.Count(e => o.All(x => x.Name != e.Name));
-                int goneSeries = o.Count(e => n.All(x => x.Name != e.Name));
+                // name sets: each side is looked up in the other once (was every pair: library size squared)
+                var oNames = o.Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
+                var nNames = n.Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
+                int newSeries = n.Count(e => !oNames.Contains(e.Name));
+                int goneSeries = o.Count(e => !nNames.Contains(e.Name));
                 int newVideos = Math.Max(0, n.Sum(e => e.Videos.Count) - o.Sum(e => e.Videos.Count));
                 var parts = new List<string>();
                 if (newSeries > 0) parts.Add($"{newSeries} new {seriesWord}{(newSeries == 1 ? "" : "s")}");
@@ -94,7 +99,7 @@ public partial class MainWindow
         syncDebounce.Tick += OnSyncDebounce;
         FileSystemEventHandler changed = (_, e) =>
         {
-            var ext = Path.GetExtension(e.FullPath).ToLowerInvariant();
+            var ext = Path.GetExtension(e.FullPath.AsSpan());
             if (ext.Length > 0 && !WatchedExt.Contains(ext)) return; // ignore temp files etc. (folders have no extension)
             Dispatcher.BeginInvoke(() => { syncDebounce.Stop(); syncDebounce.Start(); });
         };
