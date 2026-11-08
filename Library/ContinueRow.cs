@@ -140,8 +140,8 @@ public partial class MainWindow
     ImageSource? ArtFor(Entry e)
     {
         var art = InfoService.Cached(e.InfoKey)?.BannerFile;
-        if (art == null || !File.Exists(art)) return e.Cover;
-        if (continueArt.TryGetValue(art, out var hit)) return hit ?? e.Cover;
+        if (art == null || !File.Exists(art)) return e.Cover as ImageSource;
+        if (continueArt.TryGetValue(art, out var hit)) return hit ?? e.Cover as ImageSource;
         ImageSource? img = null;
         try
         {
@@ -151,7 +151,7 @@ public partial class MainWindow
         }
         catch { }
         continueArt[art] = img;
-        return img ?? e.Cover;
+        return img ?? e.Cover as ImageSource;
     }
 
     // mouse wheel scrolls the row sideways

@@ -8,16 +8,13 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Windows;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
 
 namespace AnimePlayer;
 
 // Timeline thumbnails: one exact frame per second, decoded on the GPU and cached on disk.
 // Decoding starts where you're looking: hover 1:21 and it decodes from 1:21 onwards; jump elsewhere
 // and it restarts there; once ahead is done it fills in backwards, nearest gap first.
-sealed class Thumbs : IDisposable
+sealed partial class Thumbs : IDisposable
 {
     const int H = 216;
     int W = 384, FrameBytes = 384 * H * 4;
@@ -93,12 +90,13 @@ sealed class Thumbs : IDisposable
         lock (wake) return i < slots.Length && slots[i] is { Length: > 0 };
     }
 
-    public BitmapSource? Get(double t)
+    // The JPEG of second t, or null if not decoded yet (the app turns it into a picture: Thumbs.Wpf.cs).
+    public byte[]? Jpeg(double t)
     {
         int i = Math.Max(0, (int)Math.Round(t));
         byte[]? jpg;
         lock (wake) jpg = i < slots.Length ? slots[i] : null;
-        return jpg is { Length: > 0 } ? Decode(jpg) : null;
+        return jpg is { Length: > 0 } ? jpg : null;
     }
 
     // Decode around second t first. Hovering wins; playback hints only steer it when nobody's hovering.
@@ -210,26 +208,10 @@ sealed class Thumbs : IDisposable
         return n;
     }
 
-    byte[] Encode(byte[] raw)
-    {
-        var bmp = BitmapSource.Create(W, H, 96, 96, PixelFormats.Bgra32, null, raw, W * 4);
-        var enc = new JpegBitmapEncoder { QualityLevel = 85 };
-        enc.Frames.Add(BitmapFrame.Create(bmp));
-        using var ms = new MemoryStream();
-        enc.Save(ms);
-        return ms.ToArray();
-    }
+    byte[] Encode(byte[] raw) => EncodeJpeg(raw, W, H);
 
-    static BitmapSource Decode(byte[] jpg)
-    {
-        var bi = new BitmapImage();
-        bi.BeginInit();
-        bi.StreamSource = new MemoryStream(jpg);
-        bi.CacheOption = BitmapCacheOption.OnLoad;
-        bi.EndInit();
-        bi.Freeze();
-        return bi;
-    }
+    // the app's own JPEG encoder (Thumbs.Wpf.cs): BGRA pixels, quality 85
+    private static partial byte[] EncodeJpeg(byte[] bgra, int w, int h);
 
     // Cache format: [int count] then [int length][jpeg bytes] per second (length 0 = no frame).
     bool Load()

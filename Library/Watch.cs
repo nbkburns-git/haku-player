@@ -5,7 +5,6 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Windows.Threading;
 
 namespace AnimePlayer;
 
@@ -125,15 +124,15 @@ static class Watch
         Save();
     }
 
-    static DispatcherTimer? saveTimer;
-    static void SaveSoon()
+    // Saves 5 s after the first change, on the same (UI) thread: the await comes back to it.
+    static bool savePending;
+    static async void SaveSoon()
     {
-        if (saveTimer == null)
-        {
-            saveTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
-            saveTimer.Tick += (_, _) => { saveTimer.Stop(); Save(); };
-        }
-        if (!saveTimer.IsEnabled) saveTimer.Start();
+        if (savePending) return;
+        savePending = true;
+        await System.Threading.Tasks.Task.Delay(TimeSpan.FromSeconds(5));
+        savePending = false;
+        Save();
     }
 
     public static void Save()
@@ -147,34 +146,4 @@ static class Watch
         }
         catch { }
     }
-}
-
-// Watched ticks and progress for the episode rows and cover cards.
-public sealed class WatchConverter : System.Windows.Data.IValueConverter
-{
-    static readonly System.Windows.Media.Brush Faint = Freeze(new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0x50, 0xFF, 0xFF, 0xFF)));
-    static System.Windows.Media.Brush Freeze(System.Windows.Media.Brush b) { b.Freeze(); return b; }
-
-    public object Convert(object value, Type t, object? p, System.Globalization.CultureInfo c)
-    {
-        if (value is Entry e)
-        {
-            if (e.IsRandom || e.Unit == "themes") return e.Count;
-            int done = e.Videos.Count(v => Watch.IsDone(v.Path));
-            if (e.Kind == "movie") return done > 0 ? "Watched" : e.Videos.Count > 1 ? e.Count : Watch.Progress(e.Videos[0].Path) > 0 ? "In progress" : "Movie";
-            return done == 0 ? e.Count : done >= e.Videos.Count ? $"{e.Count} · all watched" : $"{e.Count} · {done} watched";
-        }
-        if (value is not Video v) return System.Windows.DependencyProperty.UnsetValue;
-        bool isDone = Watch.IsDone(v.Path);
-        return (p as string) switch
-        {
-            "progress" => Watch.Progress(v.Path),                                   // ScaleX of the bar under the row
-            "bar" => Watch.Progress(v.Path) > 0 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed,
-            "dim" => isDone ? 0.55 : 1.0,                                          // watched rows fade back a little
-            "color" => isDone ? System.Windows.Application.Current.Resources["Accent"] : Faint,
-            "tip" => isDone ? "Watched · click to mark as unwatched" : "Mark as watched",
-            _ => System.Windows.DependencyProperty.UnsetValue,
-        };
-    }
-    public object ConvertBack(object v, Type t, object? p, System.Globalization.CultureInfo c) => throw new NotSupportedException();
 }

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Windows;
@@ -52,4 +53,34 @@ public partial class MainWindow
         int done = l.Count(v => Watch.IsDone(v.Path));
         return done == 0 ? "" : done >= l.Count ? " · all watched" : $" · {done} watched";
     }
+}
+
+// Watched ticks and progress for the episode rows and cover cards.
+public sealed class WatchConverter : System.Windows.Data.IValueConverter
+{
+    static readonly System.Windows.Media.Brush Faint = Freeze(new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromArgb(0x50, 0xFF, 0xFF, 0xFF)));
+    static System.Windows.Media.Brush Freeze(System.Windows.Media.Brush b) { b.Freeze(); return b; }
+
+    public object Convert(object value, Type t, object? p, System.Globalization.CultureInfo c)
+    {
+        if (value is Entry e)
+        {
+            if (e.IsRandom || e.Unit == "themes") return e.Count;
+            int done = e.Videos.Count(v => Watch.IsDone(v.Path));
+            if (e.Kind == "movie") return done > 0 ? "Watched" : e.Videos.Count > 1 ? e.Count : Watch.Progress(e.Videos[0].Path) > 0 ? "In progress" : "Movie";
+            return done == 0 ? e.Count : done >= e.Videos.Count ? $"{e.Count} · all watched" : $"{e.Count} · {done} watched";
+        }
+        if (value is not Video v) return System.Windows.DependencyProperty.UnsetValue;
+        bool isDone = Watch.IsDone(v.Path);
+        return (p as string) switch
+        {
+            "progress" => Watch.Progress(v.Path),                                   // ScaleX of the bar under the row
+            "bar" => Watch.Progress(v.Path) > 0 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed,
+            "dim" => isDone ? 0.55 : 1.0,                                          // watched rows fade back a little
+            "color" => isDone ? System.Windows.Application.Current.Resources["Accent"] : Faint,
+            "tip" => isDone ? "Watched · click to mark as unwatched" : "Mark as watched",
+            _ => System.Windows.DependencyProperty.UnsetValue,
+        };
+    }
+    public object ConvertBack(object v, Type t, object? p, System.Globalization.CultureInfo c) => throw new NotSupportedException();
 }

@@ -9,8 +9,14 @@ On an SDR display nothing changes. Every feature Haku has today keeps working, a
 
 **Status (2026-11-08):**
 - **Phase 0 (go/no-go test): passed everything it could check.** HDR on screen is still to check, with the tools ready.
-- **Next:** commit the pending work, then phase 1 (in today's WPF app, safe to ship).
-- Nothing is ported yet.
+- **Phase 1: done**, in the WPF app (tests pass). What changed:
+  - `Player/MpvCore.cs` now holds mpv and Direct3D 11; `MpvVideo` is only the D3DImage side.
+  - New `Player/DisplayInfo.cs` (HDR state per monitor, shown in the player stats).
+  - The library scan moved to `Library/Scan.cs`. Covers decode through two small per-app hooks (`DecodeImage`, `SaveSmallCover`).
+  - The running-time cache moved to `Library/Durations.cs`.
+  - Thumbnails split into `Thumbs.cs` (shared) and `Thumbs.Wpf.cs`. `Watch.cs` no longer uses WPF.
+  - `Sync.cs` and `Cover.cs` turned out to be UI, so they get ported instead.
+- **Next:** phase 2 on a `winui3` branch.
 
 ## Contents
 

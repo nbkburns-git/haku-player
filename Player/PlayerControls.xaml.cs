@@ -469,7 +469,11 @@ public partial class PlayerControls : UserControl
     {
         var text = await Expand(DebugTemplate);
         if (!S.Debug || text == null) return;
-        DebugText.Text = $"Show           {TitleText.Text}\n{text}\nPreviews       {thumbs?.Progress ?? "–"}";
+        // the monitor the player is on: HDR output itself comes with the WinUI version (docs/winui3-migration-plan.md)
+        var hwnd = Window.GetWindow(this) is { } w ? new System.Windows.Interop.WindowInteropHelper(w).Handle : IntPtr.Zero;
+        var display = hwnd != IntPtr.Zero ? DisplayInfo.For(hwnd) : null;
+        var shown = display == null ? "–" : display.Hdr ? $"{display} · Haku shows SDR" : display.ToString();
+        DebugText.Text = $"Show           {TitleText.Text}\n{text}\nDisplay        {shown}\nPreviews       {thumbs?.Progress ?? "–"}";
     }
 
     public void SetVolume(double v) { if (!volDragging) { volume = v; RedrawVolume(); } }

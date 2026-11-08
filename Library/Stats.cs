@@ -13,20 +13,6 @@ namespace AnimePlayer;
 // Library stats (Settings > Stats): what's in the library, how long it all runs, and what you've watched.
 public partial class MainWindow
 {
-    // Running times come from ffprobe (it only reads each file's header), cached in durations.json by size + date.
-    sealed record Probe(long Size, long Stamp, double Dur);
-    static readonly string DurFile = Path.Combine(Settings.DataDir, "durations.json");
-    static Dictionary<string, Probe>? durations;
-    static bool probing;
-    static int probeDone, probeTotal;
-
-    static Dictionary<string, Probe> Durations()
-    {
-        if (durations != null) return durations;
-        try { durations = JsonSerializer.Deserialize<Dictionary<string, Probe>>(File.ReadAllText(DurFile)); } catch { }
-        return durations = durations != null ? new(durations, StringComparer.OrdinalIgnoreCase) : new(StringComparer.OrdinalIgnoreCase);
-    }
-
     // Measures whatever isn't cached yet, in the background; the stats page refreshes as it goes.
     async void MeasureLibrary(List<string> files)
     {
@@ -44,25 +30,7 @@ public partial class MainWindow
         }
         if (todo.Count == 0) return;
         probing = true; probeDone = 0; probeTotal = todo.Count;
-        try
-        {
-            foreach (var chunk in todo.Chunk(25))
-            {
-                var got = await Task.Run(() => chunk.Select(x => (x.Path, new Probe(x.Size, x.Stamp, Segments.Duration(x.Path)))).ToList());
-                foreach (var (path, pr) in got)
-                {
-                    cache[path] = pr;
-                    // resume points picked up from mpv had no length yet
-                    if (Watch.Get(path) is { Dur: <= 0 } r && pr.Dur > 0) r.Dur = pr.Dur;
-                }
-                probeDone += chunk.Length;
-                if (SettingsLayer.IsVisible && settingsPage == "Stats") BuildGlobalSettings();
-            }
-            var tmp = DurFile + ".tmp";
-            await File.WriteAllTextAsync(tmp, JsonSerializer.Serialize(cache));
-            File.Move(tmp, DurFile, true);
-            Watch.Save();
-        }
+        try { await MeasureDurations(todo, () => { if (SettingsLayer.IsVisible && settingsPage == "Stats") BuildGlobalSettings(); }); }
         catch { }
         finally
         {
