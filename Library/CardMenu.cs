@@ -28,18 +28,6 @@ public partial class MainWindow
         e.Handled = true;
     }
 
-    // where Play starts: the episode you're part-way through, else the next unwatched one, else the first
-    static int ResumeIndex(Entry e)
-    {
-        int bi = -1; WatchRec? best = null;
-        for (int i = 0; i < e.Videos.Count; i++)
-            if (Watch.Get(e.Videos[i].Path) is { } r && (best == null || r.Last > best.Last)) { best = r; bi = i; }
-        if (best == null || e.Unit == "themes") return 0;
-        if (!best.Done) return bi;
-        int next = e.Videos.FindIndex(bi + 1, v => v.Season >= 0 && !Watch.IsDone(v.Path));
-        return next >= 0 ? next : 0;
-    }
-
     void ShowCardMenu(Entry entry)
     {
         if (entry.IsRandom) return;

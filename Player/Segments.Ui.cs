@@ -28,18 +28,11 @@ public partial class MainWindow
         if (Segments.CachedDetection(v.Path) is { } cached) found = Segments.Merge(found, cached);
         controls!.SetSegments(found);
         // still missing one: compare with the next (or previous) episode of the same season
-        if (Need() && Settings.Current.DetectSegments && entry.Kind != "movie" && Sibling(entry, v) is { } other && Segments.CachedDetection(v.Path) == null)
+        if (Need() && Settings.Current.DetectSegments && entry.Kind != "movie" && Segments.Sibling(entry, v) is { } other && Segments.CachedDetection(v.Path) == null)
         {
             var detected = await Segments.Detect(v.Path, duration, other.Path);
             if (!Still()) return;
             controls!.SetSegments(Segments.Merge(found, detected));
         }
-    }
-
-    static Video? Sibling(Entry e, Video v)
-    {
-        var season = e.Videos.Where(x => x.Season == v.Season && x.Season >= 0).ToList();
-        int i = season.IndexOf(v);
-        return i < 0 ? null : i + 1 < season.Count ? season[i + 1] : i > 0 ? season[i - 1] : null;
     }
 }

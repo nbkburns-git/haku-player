@@ -1,0 +1,38 @@
+﻿<Application x:Class="AnimePlayer.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             RequestedTheme="Dark">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries>
+        <XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls"/>
+      </ResourceDictionary.MergedDictionaries>
+      <!-- tooltips: the liquid glass panel (see-through tint, sheen, bright rim), as the WPF app's -->
+      <Style TargetType="ToolTip" BasedOn="{StaticResource DefaultToolTipStyle}">
+        <Setter Property="Foreground" Value="#F2F3F7"/>
+        <Setter Property="FontSize" Value="13"/>
+        <Setter Property="Padding" Value="13,7,13,8"/>
+        <Setter Property="CornerRadius" Value="14"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="Background">
+          <Setter.Value>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="0.3,1">
+              <GradientStop Color="#C02A2E3C" Offset="0"/>
+              <GradientStop Color="#D812141B" Offset="1"/>
+            </LinearGradientBrush>
+          </Setter.Value>
+        </Setter>
+        <Setter Property="BorderBrush">
+          <Setter.Value>
+            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+              <GradientStop Color="#99FFFFFF" Offset="0"/>
+              <GradientStop Color="#1FFFFFFF" Offset="0.4"/>
+              <GradientStop Color="#14FFFFFF" Offset="0.7"/>
+              <GradientStop Color="#4DFFFFFF" Offset="1"/>
+            </LinearGradientBrush>
+          </Setter.Value>
+        </Setter>
+      </Style>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>

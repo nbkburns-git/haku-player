@@ -176,9 +176,7 @@ public partial class PlayerControls : UserControl
         sb.Append(n).Append("_r=").Append(Pack(radius / pic.Height, Math.Min(alpha, 1))).Append(',');
     }
 
-    // Two numbers in -1..2 as one whole number below 2^24, so a float carries it exactly (unpacked in glass.glsl).
-    internal static long Pack(double u, double v) =>
-        (long)Math.Round((Math.Clamp(u, -1, 2) + 1) / 3 * 4095) * 4096 + (long)Math.Round((Math.Clamp(v, -1, 2) + 1) / 3 * 4095);
+    static long Pack(double u, double v) => GlassParams.Pack(u, v);
 
     // mpv applies these about once per video frame. Sent every screen refresh they queued up and the blur ran
     // ~0.4 s behind the bars (the "ghost bar"), so only one is in flight at a time and the newest goes next.

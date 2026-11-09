@@ -16,7 +16,85 @@ On an SDR display nothing changes. Every feature Haku has today keeps working, a
   - The running-time cache moved to `Library/Durations.cs`.
   - Thumbnails split into `Thumbs.cs` (shared) and `Thumbs.Wpf.cs`. `Watch.cs` no longer uses WPF.
   - `Sync.cs` and `Cover.cs` turned out to be UI, so they get ported instead.
-- **Next:** phase 2 on a `winui3` branch.
+- **Phase 2: first cut working** on the `winui3` branch (`HakuWinUI\`). It plays a video passed on the command line or
+  dropped on the window. What it has:
+  - Video in HDR10 on an HDR monitor, SDR otherwise (`VideoView`). Swaps when the window changes monitor.
+  - A glass pill: play/pause, timeline, time, volume, mute, fullscreen.
+  - Keys go to mpv; fullscreen mirrors mpv; the drop screen shows when mpv quits.
+
+  New shared pieces: `PlayerArgs` (the WPF app uses it too), `MpvIpc`, `GlassParams`, `Library/Entry.cs`, and `gwhite` in
+  `glass.glsl`. `tests\winui-tests.ps1` runs 24 checks in SDR and forced HDR (`HAKU_HDR=force`), all passing: first frame
+  in ~450–575 ms, no dropped frames, never takes focus, exact window size.
+
+  **Second cut (built, not run yet: launching WinUI test copies can take focus, see below):**
+  - It plays dropped or opened files and folders as one playlist, with episode names and numbers taken from the file names.
+  - A top bar with back and the title; previous/next buttons.
+  - Timeline marks for openings, endings and chapters, plus a hover preview (the shared `Thumbs`, decoded on the UI
+    thread in `Thumbs.WinUI.cs`).
+  - The Skip opening/ending card and Up next with its countdown, ported from `PlayerSegments`. Openings and endings come
+    from chapters, then online times, then comparing with the next episode. `Segments`, `Info` and `Natural` are now shared.
+  - Watch progress (`Watch.Tick`), and an audio/subtitles/speed menu.
+  - Glass for the top bar and the card (rectangles b and d).
+
+  **Phase 2 done (2026-11-08)**, all run and checked (`tests\winui-tests.ps1`: 21 checks pass):
+  - The second cut above works: skip opening, top bar, Up next playing the next episode, watch progress, and the glass
+    for the top bar and card.
+  - **AI upscaling** is now shared: `Upscaling\UpscaleSession.cs` does tiers, engines, the AI buffer, the safety net and
+    RTX Video for both apps, through `IUpscaleView`. The WPF upscaling tests all pass on it. In WinUI: the AI button,
+    badge, loading panel, green buffer, toasts and Ctrl+U. Starts paused and plays upscaled to 4K in about 1.7 s with no
+    dropped frames.
+  - Fixed: the segment lookup ran before the playlist position was known, so it never ran. mpv reports the length first.
+  - Still to check: HDR on a real HDR screen.
+- **Phase 3: core pages working (2026-11-08).** The library logic moved to `Library\LibraryLogic.cs`, shared and with no UI
+  in it: lib/Libs, favourites, filters and sorting, Continue watching, seasons, what's missing, the resume episode, the
+  sync message, and background details and covers. The WPF library tests all pass on it.
+  - **WinUI pages** (`HakuWinUI\Library.WinUI.cs`, `Detail.WinUI.cs`):
+    - Home: the wordmark, a tile per library with a drifting wall of its covers, and the Continue cards.
+    - The library grid (virtualized `ItemsRepeater`), with search and filter chips. Cards lift on hover and have stars
+      and a right-click menu (play/resume, favourite, mark watched, rename).
+    - The show page: banner, cover, facts, genres, description, seasons and episodes with ticks, stars and progress,
+      what's missing, and Mark all watched.
+    - Sync, with a folder watcher.
+  - Home appears about 510 ms after launch (WPF: about 650).
+  - Covers: `Covers.WinUI.cs` makes the small copies off the UI thread with Windows' imaging, and pages show them with
+    `BitmapImage`.
+  - **Test pipe** (`TestHooks.cs`, test runs only): `press <name>` and `text <name>|<text>`, pressed in-process, so a test
+    never brings the window forward. `tests\winui-tests.ps1` now goes through home, the library, a show page, playing
+    and back: 28 checks pass. `tests\winui-shots.ps1` takes screenshots of the pages.
+  - Fixed: a rare deadlock when a resize waited for the render thread while that thread's first Present needed the UI thread.
+  - Not done yet: paging and drag-to-reorder of home tiles, + Library, the cover glow on show pages, the drifting
+    background blobs, and "Wrong show info?" (phase 4, with Settings).
+- **Test windows and focus** (`tests\focus-watch.ps1` launches a test copy and logs the foreground window):
+  - **WPF: fixed.** The test window came to the front about 0.4 s after launch. WPF made it on the main monitor (150%) and
+    moved it to the test one (100%), and its DPI-change handling activates the window. `Player\TestFocus.cs` now makes
+    the window right where `HAKU_TEST_WINDOW` puts it, using a thread CBT hook in test runs only. Your window keeps the
+    foreground the whole time. The fix is on the `winui3` branch and needs to reach `main` too.
+  - **WinUI: fixed.** WinUI shows and activates its window while making it (inside `Window`'s constructor), and that
+    sometimes took the foreground: a program started by the one in front may come to the front once. A test copy now
+    gives that up first (`LockSetForegroundWindow`, released as it exits). Things that didn't work: `WS_EX_NOACTIVATE`,
+    making the window hidden, `SWP_NOACTIVATE` on its moves, and refusing the activation (that left no foreground window
+    at all, which a fullscreen game can take as alt-tab).
+  - `tests\safe-to-launch.ps1`: both test scripts now refuse to launch a test copy while WoW runs, a fullscreen window is
+    in front, or your own Haku is in front.
+  - Pressing a WinUI button through UI Automation also brings its window to the front, so the WinUI tests drive actions
+    through mpv's pipe and only read the window.
+
+**Look parity (2026-11-09):** the WinUI app now copies the WPF app's look, not just its features. Checked side by side
+with `tests\compare-shots.ps1` (same pages in both apps on the test monitor, captured with PrintWindow; pairs land in
+`%TEMP%\haku-compare`). What changed to get there:
+- `Look.WinUI.cs`: WPF's App.xaml styles (Flat, Glass, Back, Caption, Icon, Chip, Row), the glass brushes, a WrapPanel,
+  the logo drawn from the same shapes, text glow.
+- No Windows caption buttons: the header and the player's top bar have Haku's own, as in WPF.
+- `Backdrop.WinUI.cs`: thin desktop acrylic (matches WPF's DWM acrylic exactly), the tint, drifting colour blobs, the
+  cover glow on show pages, the bottom shade.
+- `Home.WinUI.cs`: WPF tiles (paging, arrows, dots, drag to reorder, + Library) and Continue watching cards.
+- Player: WPF's 68 px pill and 56 px top bar (badge, pop-out, window buttons), its glass menus for tracks, speed and settings.
+- `Popups.WinUI.cs`: glass right-click menu, rename box, "Find the right show", the banner faded with a composition mask.
+- `Splash.WinUI.cs`: the loading screen. Tooltips use the glass look (App.xaml).
+- A video opened at launch waits for the library (as WPF), so it plays as that show's episode.
+
+Not copied: WinUI has no blur or drop shadow on arbitrary elements, so text shadows over video, the AI button's green
+glow and card drop shadows are left out; scrollbars are WinUI's own.
 
 ## Contents
 

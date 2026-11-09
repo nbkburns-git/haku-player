@@ -25,16 +25,6 @@ namespace AnimePlayer;
 
 public partial class MainWindow : Window
 {
-    // Libraries: a command-line arg (one anime folder with Anime Shows / Anime Openings, for testing), else the ones set in Settings.
-    static readonly string? Arg = Environment.GetCommandLineArgs().Skip(1).FirstOrDefault();
-    static readonly string? ArgRoot = Arg != null && Directory.Exists(Arg) ? Arg : null;
-    static readonly string? ArgFile = Arg != null && File.Exists(Arg) ? Arg : null; // "Open with" / a video dropped on the exe: play it
-    static readonly List<MediaLibrary> ArgLibs = ArgRoot == null ? new() : new()
-    {
-        new() { Id = "shows", Name = "Shows and Movies", Folders = { new() { Path = ArgRoot, Kind = "anime" } } },
-        new() { Id = "themes", Name = "Openings / Endings", Folders = { new() { Path = ArgRoot, Kind = "themes" } } },
-    };
-    static List<MediaLibrary> Libs => ArgRoot != null ? ArgLibs : Settings.Current.Libs;
 
     // Test runs (tests\app-tests.ps1): HAKU_TEST_WINDOW="x,y,w,h" in screen pixels puts the window there (e.g. on another
     // monitor) and Haku never takes focus or comes to the front, so tests can run while you use the PC.
@@ -42,13 +32,8 @@ public partial class MainWindow : Window
         Environment.GetEnvironmentVariable("HAKU_TEST_WINDOW")?.Split(',') is { Length: 4 } p && p.All(x => int.TryParse(x, out _))
             ? (int.Parse(p[0]), int.Parse(p[1]), int.Parse(p[2]), int.Parse(p[3])) : null;
     void Front() { if (TestWindow == null) Activate(); }
-    static readonly System.Collections.Frozen.FrozenSet<string>.AlternateLookup<ReadOnlySpan<char>> CoverExt =
-        System.Collections.Frozen.FrozenSet.ToFrozenSet(new[] { ".png", ".jpg", ".jpeg", ".webp", ".bmp" }, StringComparer.OrdinalIgnoreCase)
-            .GetAlternateLookup<ReadOnlySpan<char>>();
-    static readonly string DataDir = Settings.DataDir; // %LOCALAPPDATA%\Haku Player
-    public static readonly string GlassShader = Path.Combine(AppContext.BaseDirectory, "Assets", "glass.glsl");
+    public static readonly string GlassShader = PlayerArgs.GlassShader;
 
-    Dictionary<string, List<Entry>> lib = new();
     MpvVideo? mpv;
     StreamWriter? ipc;
     PlayerControls? controls;
@@ -77,7 +62,15 @@ public partial class MainWindow : Window
             HwndSource.FromHwnd(Hwnd).AddHook(KeepVideoShape);
             if (TestWindow is { } r) SetWindowPos(Hwnd, IntPtr.Zero, r.X, r.Y, r.W, r.H, 0x0014 /* NOZORDER | NOACTIVATE */);
         };
-        if (TestWindow != null) ShowActivated = false; // a test run: never take focus (you may be in a game)
+        if (TestWindow is { } tw)
+        {
+            ShowActivated = false; // a test run: never take focus (you may be in a game)
+            // Made right where it goes (TestFocus creates the window there), so it doesn't start on the main monitor and
+            // move over, which activated it; its position here is in the test monitor's own scale.
+            double s = TestFocus.Scale;
+            WindowStartupLocation = WindowStartupLocation.Manual;
+            Left = tw.X / s; Top = tw.Y / s; Width = tw.W / s; Height = tw.H / s;
+        }
         // again once shown: on a scaled monitor WPF applies its own size after SourceInitialized (2400 wide became 3600 at 150%)
         ContentRendered += (_, _) => { if (TestWindow is { } r) SetWindowPos(Hwnd, IntPtr.Zero, r.X, r.Y, r.W, r.H, 0x0014); };
         StateChanged += (_, _) => { FitMaximized(); UpdateBlobs(); };
@@ -758,8 +751,7 @@ public partial class MainWindow : Window
 
     int? openSeason; // the season being shown, or null for the season list / a show without seasons
 
-    static List<IGrouping<int, Video>> Seasons(Entry e) => e.Unit != "episodes" ? new()
-        : e.Videos.GroupBy(v => v.Season).OrderBy(g => g.Key < 0 ? int.MaxValue : g.Key).ToList(); // extras (-1) last
+ // extras (-1) last
 
     // A show with several seasons opens on its seasons; one season (or none known) goes straight to the episodes.
     void ShowEpisodes(Entry entry, int? season)
@@ -793,8 +785,6 @@ public partial class MainWindow : Window
         VideoScroll.ScrollToTop();
     }
 
-    static string SeasonName(int s) => s < 0 ? "Extras" : s == 0 ? "Other episodes" : $"Season {s}";
-
     Button SeasonRow(Entry entry, IGrouping<int, Video> g)
     {
         int n = g.Count();
@@ -821,30 +811,6 @@ public partial class MainWindow : Window
     void OnSeasonBack(object s, RoutedEventArgs e) { if (Detail.DataContext is Entry entry) ShowEpisodes(entry, null); }
 
     // ---------- what's missing ----------
-
-    // The show's official episodes (aired, specials left out) that have no file in your library, by season.
-    static List<(int Season, List<int> Eps, int Total)> Missing(Entry e, Dictionary<string, string> names)
-    {
-        var have = e.Videos.Where(v => v.Season >= 0 && v.Ep > 0).Select(v => (Math.Max(1, v.Season), v.Ep)).ToHashSet();
-        var official = names.Keys.Select(k => k.Split(':')).Where(p => p.Length == 2 && int.TryParse(p[0], out _) && int.TryParse(p[1], out _))
-            .Select(p => (S: int.Parse(p[0]), E: int.Parse(p[1]))).Where(x => x.S >= 1).ToList();
-        return official.GroupBy(x => x.S).OrderBy(g => g.Key)
-            .Select(g => (g.Key, g.Where(x => !have.Contains(x)).Select(x => x.E).OrderBy(x => x).ToList(), g.Count()))
-            .Where(x => x.Item2.Count > 0).ToList();
-    }
-
-    // 1,2,3,5,7,8 -> "E1–3, E5, E7–8"
-    static string Ranges(List<int> eps)
-    {
-        var parts = new List<string>();
-        for (int i = 0; i < eps.Count; i++)
-        {
-            int start = eps[i];
-            while (i + 1 < eps.Count && eps[i + 1] == eps[i] + 1) i++;
-            parts.Add(eps[i] == start ? $"E{start}" : $"E{start}–{eps[i]}");
-        }
-        return string.Join(", ", parts);
-    }
 
     void OnMissing(object s, RoutedEventArgs e)
     {
@@ -1104,12 +1070,11 @@ public partial class MainWindow : Window
         }
         videoAspect = 0;
         lastFill = null; // a new mpv: its zoom-to-fill starts off
-        upscaleActive = false; // and its filter chain is empty
+        NewUpscaleSession(); // and its filter chain is empty: a fresh upscaling session (UpscaleSession.cs)
         controls?.SetUpscale(0);
         videoWidth = videoHeight = 0;
         ResetUpscale();
-        // AI buffer: start paused and let UpdateUpscale resume once the AI is running (or straight away if it won't upscale)
-        aiHolding = false;
+        // AI buffer: start paused and let the upscaling resume once the AI is running (or straight away if it won't upscale)
         bool aiStart = Settings.Current.Upscale && Upscaler.Installed;
         playingEntry = entry;
         autoPop = Settings.Current.AutoPopOut;
@@ -1123,40 +1088,7 @@ public partial class MainWindow : Window
         File.WriteAllLines(m3u, entry.Videos.Select(v => v.Path).Prepend("#EXTM3U"), new UTF8Encoding(false));
 
         var pipe = $"animeplayer-{Environment.ProcessId}-{my}";
-        var args = new[]
-        {
-            "--drag-and-drop=no", // files dropped on the video come to us instead (DropPlay.cs)
-            $@"--input-ipc-server=\\.\pipe\{pipe}",
-            "--profile=high-quality",
-            // decode on the GPU; AI upscaling needs D3D11 frames (vf_hakusr), which d3d11va gives
-            Settings.Current.Upscale && Upscaler.Installed ? "--hwdec=d3d11va,auto-safe" : "--hwdec=auto-safe",
-            // shows resume where you left off; openings/endings always play from the start
-            $"--save-position-on-quit={(Settings.Current.Resume && entry.Unit != "themes" ? "yes" : "no")}",
-            $"--resume-playback={(Settings.Current.Resume && entry.Unit != "themes" ? "yes" : "no")}",
-            $"--watch-later-dir={Path.Combine(DataDir, "watch_later")}",
-            "--osc=no", "--osd-bar=no",         // our own control bar replaces mpv's
-            "--cursor-autohide=no",           // matches the bar's 2s auto-hide
-            $"--keep-open={(Settings.Current.Autoplay ? "no" : "yes")}", // autoplay next, or stop at the end
-            // language defaults: anime and TV/movies each have their own; our picker then prefers full subtitles over signs-only
-            $"--alang={Settings.Langs(Settings.Current.LangFor(entry.Kind).Audio)}",
-            $"--slang={Settings.Langs(Settings.Current.LangFor(entry.Kind).Subs)}",
-            $"--sid={(Settings.Current.LangFor(entry.Kind).On ? "auto" : "no")}",
-            $"--sub-scale={Settings.Current.SubScale.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-            $"--sub-pos={Settings.Current.SubPos.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-            "--title=Haku Player",               // name shown in the Windows volume mixer
-            "--audio-client-name=Haku Player",
-            $"--glsl-shaders={GlassShader}",     // real-time liquid glass under the player bars
-            "--border-background=blur",          // letterbox bars show the video, blurred, instead of black
-            "--background-blur-radius=48",
-            // volume is app-wide; subtitle timing is ours, per video; the AI filter and its start-up pause are Haku's to set
-            "--watch-later-options-remove=volume,mute,speed,sub-delay,vf,pause",
-            $"--pause={(aiStart ? "yes" : "no")}",
-            // read ahead (shown in blue on the timeline): a minute or two of a typical episode; seeks inside it are instant
-            "--cache=yes", "--demuxer-max-bytes=256MiB", "--demuxer-max-back-bytes=64MiB",
-            $"--volume={volume.ToString(System.Globalization.CultureInfo.InvariantCulture)}",
-            $"--playlist-start={index}",
-            $"--playlist={m3u}",
-        };
+        var args = PlayerArgs.Build(pipe, m3u, index, entry.Unit, entry.Kind, volume, aiStart);
 
         try
         {
@@ -1446,13 +1378,6 @@ public partial class MainWindow : Window
         SaveVolume();
         Close();
     }
-}
-
-sealed class Natural : IComparer<string?>
-{
-    public static readonly Natural I = new();
-    [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)] static extern int StrCmpLogicalW(string a, string b);
-    public int Compare(string? a, string? b) => StrCmpLogicalW(a ?? "", b ?? ""); // "OP2" before "OP10"
 }
 
 // Wheel scrolling that glides to the target instead of jumping 48px per notch.

@@ -14,6 +14,10 @@ public partial class MainWindow
     sealed record Probe(long Size, long Stamp, double Dur);
     static readonly string DurFile = Path.Combine(Settings.DataDir, "durations.json");
     static Dictionary<string, Probe>? durations;
+    // 1.5 h, 45 min, 120 h; 1.2 TB, 340.5 GB
+    static string Hours(double secs) => secs >= 3600 * 100 ? $"{secs / 3600:0} h" : secs >= 3600 ? $"{secs / 3600:0.#} h" : $"{Math.Round(secs / 60)} min";
+    static string Size(long bytes) => bytes >= 1L << 40 ? $"{bytes / (double)(1L << 40):0.##} TB" : $"{bytes / (double)(1L << 30):0.#} GB";
+
     static bool probing;
     static int probeDone, probeTotal;
 

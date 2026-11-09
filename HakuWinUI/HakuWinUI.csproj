@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Haku Player on WinUI 3, for HDR (docs/winui3-migration-plan.md). Shares the UI-free code with the WPF app by
+       linking the files where they are (nothing moved). Unpackaged and self-contained: runs from its folder like today. -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net9.0-windows10.0.26100.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
+    <WindowsSdkPackageVersion>10.0.26100.87</WindowsSdkPackageVersion>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <Platforms>x64</Platforms>
+    <Platform>x64</Platform>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>HakuPlayer</AssemblyName>
+    <RootNamespace>AnimePlayer</RootNamespace>
+    <Product>Haku Player</Product>
+    <ApplicationIcon>..\Assets\haku.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- shared with the WPF app (no UI in them) -->
+    <Compile Include="..\Player\MpvCore.cs" Link="Shared\MpvCore.cs" />
+    <Compile Include="..\Player\MpvJson.cs" Link="Shared\MpvJson.cs" />
+    <Compile Include="..\Player\MpvIpc.cs" Link="Shared\MpvIpc.cs" />
+    <Compile Include="..\Player\PlayerArgs.cs" Link="Shared\PlayerArgs.cs" />
+    <Compile Include="..\Player\GlassParams.cs" Link="Shared\GlassParams.cs" />
+    <Compile Include="..\Player\DisplayInfo.cs" Link="Shared\DisplayInfo.cs" />
+    <Compile Include="..\Player\TestFocus.cs" Link="Shared\TestFocus.cs" />
+    <Compile Include="..\Settings\Settings.cs" Link="Shared\Settings.cs" />
+    <Compile Include="..\Upscaling\Upscaler.cs" Link="Shared\Upscaler.cs" />
+    <Compile Include="..\Upscaling\UpscaleSession.cs" Link="Shared\UpscaleSession.cs" />
+    <Compile Include="..\Library\Names.cs" Link="Shared\Names.cs" />
+    <Compile Include="..\Library\Entry.cs" Link="Shared\Entry.cs" />
+    <Compile Include="..\Library\Watch.cs" Link="Shared\Watch.cs" />
+    <Compile Include="..\Library\Natural.cs" Link="Shared\Natural.cs" />
+    <Compile Include="..\Library\Scan.cs" Link="Shared\Scan.cs" />
+    <Compile Include="..\Library\Crawl.cs" Link="Shared\Crawl.cs" />
+    <Compile Include="..\Library\LibraryLogic.cs" Link="Shared\LibraryLogic.cs" />
+    <Compile Include="..\Library\Durations.cs" Link="Shared\Durations.cs" />
+    <Compile Include="..\Discord\Discord.cs" Link="Shared\Discord.cs" />
+    <Compile Include="..\Library\Info.cs" Link="Shared\Info.cs" />
+    <Compile Include="..\Player\Segments.cs" Link="Shared\Segments.cs" />
+    <Compile Include="..\Player\Thumbs.cs" Link="Shared\Thumbs.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="..\Assets\glass.glsl" Link="Assets\glass.glsl" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\Assets\haku.ico" Link="Assets\haku.ico" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Assets\Fonts\Outfit-SemiBold.ttf" Link="Assets\Fonts\Outfit-SemiBold.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\Assets\Fonts\Outfit-Light.ttf" Link="Assets\Fonts\Outfit-Light.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\lib\libmpv-2.dll" Link="libmpv-2.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\lib\haku_sr.dll" Link="haku_sr.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('..\lib\haku_sr.dll')" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="2.6.5" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" Version="2.6.5" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
+    <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
+  </ItemGroup>
+</Project>

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -18,14 +18,20 @@ sealed class MpvCore
     public readonly ID3D11DeviceContext Context;
     public event Action? FrameReady;       // mpv has something new to draw (on mpv's own thread)
     public event Action? Shutdown;         // mpv shut down: quit, or the playlist ended (on mpv's event thread)
-    public Task Stopped => stopped.Task;
+    public Task Stopped => stopped.Task;  // gone completely (after Free)
+    public Task ShutDown => shutDown.Task; // mpv has quit (resume point saved): its render context can be freed now
+    readonly TaskCompletionSource shutDown = new(TaskCreationOptions.RunContinuationsAsynchronously);
     public bool Dead { get; private set; }
     readonly TaskCompletionSource stopped = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     IntPtr mpv, render;
     readonly RenderUpdate onUpdate; // kept alive: mpv holds a pointer to it
 
-    public MpvCore(IEnumerable<string> args)
+    string? playlist; // loaded by the constructor, or by Load() when the screen side has to be ready first
+
+    // deferLoad: the playlist waits for Load(). The WinUI app makes its swap chain on mpv's device first: making it while
+    // mpv's decoder was starting up on the same device hung both now and then.
+    public MpvCore(IEnumerable<string> args, bool deferLoad = false)
     {
         onUpdate = _ => FrameReady?.Invoke();
         mpv = mpv_create();
@@ -35,7 +41,6 @@ sealed class MpvCore
         Set("input-default-bindings", "yes"); // keys we forward ("keypress") use mpv's own bindings
         Set("terminal", "no");
         if (Trace != null) { Set("log-file", Trace + ".mpv.log"); Set("msg-level", "all=v"); }
-        string? playlist = null;
         foreach (var a in args)
         {
             var s = a.StartsWith("--") ? a[2..] : a;
@@ -62,7 +67,7 @@ sealed class MpvCore
         mpv_render_context_set_update_callback(render, onUpdate, IntPtr.Zero);
 
         new Thread(EventLoop) { IsBackground = true, Name = "mpv events" }.Start();
-        if (playlist != null) Command("loadlist", playlist);
+        if (!deferLoad) Load();
     }
 
     // What every draw hands mpv: the texture to draw into, and "don't block". Made once and reused (each frame used to
@@ -71,6 +76,14 @@ sealed class MpvCore
     RenderParam[]? drawParamsCache;
     RenderParam[] DrawParams => drawParamsCache ??= new[] { new RenderParam(22 /* D3D11_FBO */, fboArg), new RenderParam(12 /* BLOCK_FOR_TARGET_TIME */, noWaitArg), new RenderParam(0, IntPtr.Zero) };
     static IntPtr AllocInt(int v) { var p = Marshal.AllocHGlobal(4); Marshal.WriteInt32(p, v); return p; }
+
+    // Starts playing the playlist (once).
+    public void Load()
+    {
+        if (playlist == null || Dead) return;
+        Command("loadlist", playlist);
+        playlist = null;
+    }
 
     // Does mpv have a new frame to draw? (Also lets mpv know we're ready for one.)
     public bool NeedsFrame()
@@ -98,6 +111,7 @@ sealed class MpvCore
         {
             var e = mpv_wait_event(mpv, -1);
             if (Marshal.ReadInt32(e) != 1 /* MPV_EVENT_SHUTDOWN */) continue;
+            shutDown.TrySetResult();
             Shutdown?.Invoke();
             return;
         }

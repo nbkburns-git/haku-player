@@ -22,6 +22,7 @@ public partial class App : Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        TestFocus.Install(); // test runs: never the foreground window
         // a video dropped on the exe while the app is open: play it in that window instead of opening a second one
         instance = new Mutex(true, InstanceKey, out bool first);
         if (!first && e.Args.Length > 0 && File.Exists(e.Args[0]))

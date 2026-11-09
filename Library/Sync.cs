@@ -15,7 +15,6 @@ namespace AnimePlayer;
 public partial class MainWindow
 {
     bool syncing;
-    string currentCategory = "";
     readonly List<FileSystemWatcher> watchers = new();
     readonly DispatcherTimer syncDebounce = new() { Interval = TimeSpan.FromSeconds(3) };
     readonly DispatcherTimer toastTimer = new() { Interval = TimeSpan.FromSeconds(3.2) };
@@ -39,25 +38,7 @@ public partial class MainWindow
             ApplyLibrary();
             _ = PrefetchDetails();
 
-            // what changed
-            string Diff(bool themes, string seriesWord, string videoWord)
-            {
-                var o = Everything(old).Where(e => (e.Unit == "themes") == themes).ToList();
-                var n = Everything(fresh).Where(e => (e.Unit == "themes") == themes).ToList();
-                // name sets: each side is looked up in the other once (was every pair: library size squared)
-                var oNames = o.Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
-                var nNames = n.Select(e => e.Name).ToHashSet(StringComparer.Ordinal);
-                int newSeries = n.Count(e => !oNames.Contains(e.Name));
-                int goneSeries = o.Count(e => !nNames.Contains(e.Name));
-                int newVideos = Math.Max(0, n.Sum(e => e.Videos.Count) - o.Sum(e => e.Videos.Count));
-                var parts = new List<string>();
-                if (newSeries > 0) parts.Add($"{newSeries} new {seriesWord}{(newSeries == 1 ? "" : "s")}");
-                if (newVideos > 0) parts.Add($"{newVideos} new {videoWord}{(newVideos == 1 ? "" : "s")}");
-                if (goneSeries > 0) parts.Add($"{goneSeries} {seriesWord}{(goneSeries == 1 ? "" : "s")} removed");
-                return string.Join(" · ", parts);
-            }
-            var msg = string.Join(" · ", new[] { Diff(false, "show", "episode"), Diff(true, "series", "theme") }.Where(x => x.Length > 0))
-                .Replace("seriess", "series");
+            var msg = SyncMessage(old, fresh);
             if (msg.Length > 0) Toast($"Library synced · {msg}");
             else if (manual) Toast("Library is up to date");
         }
@@ -80,14 +61,6 @@ public partial class MainWindow
             var now = lib.Values.SelectMany(x => x).FirstOrDefault(x => x.Folder == cur.Folder);
             if (now != null) { Detail.DataContext = now; ShowEpisodes(now, openSeason); } // stay in the season you were looking at
         }
-    }
-
-    List<Entry> CategoryList(string key)
-    {
-        var list = lib.GetValueOrDefault(key) ?? new();
-        if (list.Where(x => x.Unit == "themes").SelectMany(x => x.Videos).ToList() is { Count: > 0 } themes) // a shuffle of this library's openings
-            list = list.Prepend(new Entry("Random", null, themes, "themes", true)).ToList();
-        return list;
     }
 
     // Auto-sync: any video/cover added, removed or renamed under the library re-syncs a few seconds later.

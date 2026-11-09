@@ -47,12 +47,6 @@ public partial class MainWindow
         MarkAllText.Text = all ? "Mark as unwatched" : SeasonList.IsVisible || !SeasonBack.IsVisible ? "Mark all watched" : "Mark season watched";
     }
 
-    static string WatchedSuffix(IEnumerable<Video> videos)
-    {
-        var l = videos.ToList();
-        int done = l.Count(v => Watch.IsDone(v.Path));
-        return done == 0 ? "" : done >= l.Count ? " · all watched" : $" · {done} watched";
-    }
 }
 
 // Watched ticks and progress for the episode rows and cover cards.
@@ -63,13 +57,7 @@ public sealed class WatchConverter : System.Windows.Data.IValueConverter
 
     public object Convert(object value, Type t, object? p, System.Globalization.CultureInfo c)
     {
-        if (value is Entry e)
-        {
-            if (e.IsRandom || e.Unit == "themes") return e.Count;
-            int done = e.Videos.Count(v => Watch.IsDone(v.Path));
-            if (e.Kind == "movie") return done > 0 ? "Watched" : e.Videos.Count > 1 ? e.Count : Watch.Progress(e.Videos[0].Path) > 0 ? "In progress" : "Movie";
-            return done == 0 ? e.Count : done >= e.Videos.Count ? $"{e.Count} · all watched" : $"{e.Count} · {done} watched";
-        }
+        if (value is Entry e) return MainWindow.CardSubtitle(e);
         if (value is not Video v) return System.Windows.DependencyProperty.UnsetValue;
         bool isDone = Watch.IsDone(v.Path);
         return (p as string) switch

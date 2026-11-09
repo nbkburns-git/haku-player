@@ -27,11 +27,12 @@
     <None Include="lib\haku_sr.dll" Link="haku_sr.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('lib\haku_sr.dll')" />
   </ItemGroup>
   <ItemGroup>
-    <!-- tools\ holds separate projects (the WinUI/HDR test app): not part of Haku's build -->
-    <Compile Remove="tools\**" />
-    <Page Remove="tools\**" />
-    <ApplicationDefinition Remove="tools\**" />
-    <None Remove="tools\**" />
+    <!-- tools\ (the WinUI/HDR test app) and HakuWinUI\ (the WinUI version, docs/winui3-migration-plan.md) are separate
+         projects: not part of this build -->
+    <Compile Remove="tools\**;HakuWinUI\**" />
+    <Page Remove="tools\**;HakuWinUI\**" />
+    <ApplicationDefinition Remove="tools\**;HakuWinUI\**" />
+    <None Remove="tools\**;HakuWinUI\**" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />

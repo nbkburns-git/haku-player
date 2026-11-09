@@ -268,19 +268,6 @@ public partial class MainWindow
         Settings.Current.Save();
     }
 
-    // "15 shows · 19 movies", "93 series · 265 themes", or both for a mixed library
-    static string TileCount(List<Entry> entries)
-    {
-        static string N(int n, string one, string many) => $"{n} {(n == 1 ? one : many)}";
-        int shows = entries.Count(x => x.Unit != "themes" && x.Kind != "movie"), movies = entries.Count(x => x.Kind == "movie");
-        var themes = entries.Where(x => x.Unit == "themes").ToList();
-        var parts = new List<string>();
-        if (shows > 0) parts.Add(N(shows, "show", "shows"));
-        if (movies > 0) parts.Add(N(movies, "movie", "movies"));
-        if (themes.Count > 0) parts.Add($"{themes.Count} series · {N(themes.Sum(x => x.Videos.Count), "theme", "themes")}");
-        return parts.Count > 0 ? string.Join(" · ", parts) : "Nothing yet · add folders in Settings";
-    }
-
     // + Library: a new, empty library (on the last page), opened in Settings to name it and add its folders.
     void OnAddTile(object s, RoutedEventArgs e)
     {

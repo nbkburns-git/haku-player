@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
@@ -16,29 +16,12 @@ namespace AnimePlayer;
 // and the background fetch that gives every show its details, banner and (if missing) cover.
 public partial class MainWindow
 {
-    bool filterFav;
-    string sortMode = "az";     // az / new / top
-    string? genre;
-    string? kindFilter; // a tag ("Anime", "TV shows", your own…): only shows with it
-    bool prefetching;
 
-    // ---------- favourites ----------
-
-    public static bool IsFav(object? item) => item switch
-    {
-        Entry e => !e.IsRandom && Settings.Current.Favorites.Contains(e.Folder),
-        Video v => Settings.Current.FavoriteVideos.Contains(v.Path),
-        _ => false,
-    };
+    // ---------- favourites (IsFav: LibraryLogic.cs) ----------
 
     void ToggleFav(object? item)
     {
-        var s = Settings.Current;
-        if (item is Entry e && !e.IsRandom) { if (!s.Favorites.Remove(e.Folder)) s.Favorites.Add(e.Folder); }
-        else if (item is Video v) { if (!s.FavoriteVideos.Remove(v.Path)) s.FavoriteVideos.Add(v.Path); }
-        else return;
-        s.Save();
-        RefreshFavViews();
+        if (ToggleFavData(item)) RefreshFavViews();
     }
 
     void OnStar(object s, RoutedEventArgs e)
@@ -64,47 +47,14 @@ public partial class MainWindow
 
     // ---------- search / filter / sort ----------
 
-    List<Entry> LibraryBase()
-    {
-        if (currentCategory == "All")
-            return Everything(lib).OrderBy(x => x.Name, Natural.I).ToList();
-        return CategoryList(currentCategory);
-    }
-
     void ApplyFilter()
     {
         var q = SearchBox.Text.Trim();
         SearchHint.Visibility = q.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         // the section's shows, sorted once: the filter bar's tag and genre chips come from the same list
         var all = LibraryBase();
-        IEnumerable<Entry> items = all;
-        if (filterFav) items = items.Where(x => !x.IsRandom && (IsFav(x) || x.Videos.Any(IsFav)));
-        if (kindFilter != null) items = items.Where(x => x.Tag == kindFilter);
-        if (genre != null) items = items.Where(x => InfoService.Cached(x.InfoKey)?.Genres.Contains(genre) == true);
-        if (q.Length > 0)
-            items = items.Where(x => !x.IsRandom && Matches(x, q));
-        items = sortMode switch
-        {
-            "new" => items.OrderByDescending(x => x.IsRandom).ThenByDescending(x => SafeTime(x.Folder)),
-            "top" => items.OrderByDescending(x => x.IsRandom).ThenByDescending(x => InfoService.Cached(x.InfoKey)?.Score ?? -1),
-            _ => items.OrderByDescending(x => x.IsRandom).ThenBy(x => x.Title, Natural.I),
-        };
-        Cards.ItemsSource = items.ToList();
+        Cards.ItemsSource = Filtered(all, q);
         BuildFilterBar(all);
-    }
-
-    static bool Matches(Entry x, string q)
-    {
-        var info = InfoService.Cached(x.InfoKey);
-        return x.Name.Contains(q, StringComparison.OrdinalIgnoreCase) || x.Title.Contains(q, StringComparison.OrdinalIgnoreCase)
-            || (info?.Title?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
-            || (info?.Native?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false)
-            || x.Videos.Any(v => v.Title.Contains(q, StringComparison.OrdinalIgnoreCase));
-    }
-
-    static DateTime SafeTime(string folder)
-    {
-        try { return folder.Length > 0 ? Directory.GetCreationTime(folder) : DateTime.MinValue; } catch { return DateTime.MinValue; }
     }
 
     // Filtering rebuilds every cover card, so it waits for a short pause in typing.
@@ -137,9 +87,7 @@ public partial class MainWindow
         Chip("All", !filterFav, () => filterFav = false);
         Chip("★ Favourites", filterFav, () => filterFav = true);
         // its tags (Anime / TV shows / Movies / your own), when this library mixes them; click again to show everything
-        var builtIn = LibraryFolder.Kinds.Select(k => k.Name).ToList();
-        var tags = all.Where(x => !x.IsRandom && x.Tag.Length > 0).Select(x => x.Tag).Distinct()
-            .OrderBy(t => builtIn.IndexOf(t) is var i && i >= 0 ? i : 99).ThenBy(t => t, Natural.I).ToList();
+        var tags = FilterTags(all);
         if (tags.Count > 1)
         {
             Gap();
@@ -150,8 +98,7 @@ public partial class MainWindow
         Chip("Newest", sortMode == "new", () => sortMode = "new");
         Chip("Top rated", sortMode == "top", () => sortMode = "top");
         // genres present in this section (from fetched details), most common first
-        var genres = all.Select(x => InfoService.Cached(x.InfoKey)).OfType<ShowInfo>()
-            .SelectMany(i => i.Genres).CountBy(g => g).OrderByDescending(g => g.Value).Take(10).Select(g => g.Key).ToList();
+        var genres = FilterGenres(all);
         if (genres.Count > 0)
         {
             Gap();
@@ -176,70 +123,17 @@ public partial class MainWindow
         Dispatcher.BeginInvoke(() => { SearchBox.Focus(); Keyboard.Focus(SearchBox); }, System.Windows.Threading.DispatcherPriority.Input);
     }
 
-    // ---------- background details + covers ----------
+    // ---------- background details + covers (PrefetchDetails: LibraryLogic.cs) ----------
 
-    // Fetches details for every series that doesn't have them yet (AniList allows ~90 requests a minute,
-    // so this paces itself), and saves a cover.jpg into any folder that has no cover.
-    async Task PrefetchDetails()
+    // a show's details came in while you're looking at it
+    void OnDetailsFetched(Entry e)
     {
-        if (prefetching) return;
-        prefetching = true;
-        try
-        {
-            // new shows, ones matched by the old name-only lookup (re-checked once with the better matching), and missing covers
-            // TV/movie posters saved from metahub (sometimes the wrong picture) are swapped once for IMDb's official one
-            static bool OldPoster(Entry x) => x.Kind != "anime" && InfoService.Cached(x.InfoKey)?.CoverUrl?.Contains("metahub.space") == true;
-            // TV details saved before episode names were kept: fetch once more to get them
-            static bool NoEpisodeNames(Entry x) => x.Kind != "movie" && x.Unit == "episodes" && InfoService.Cached(x.InfoKey) is { EpisodeNames: null };
-            var todo = Everything(lib).Where(x => !x.IsRandom)
-                .Where(x => InfoService.Cached(x.InfoKey) is not { Source: not null } || (x.Cover == null && InfoService.Cached(x.InfoKey)?.CoverUrl != null) || OldPoster(x) || NoEpisodeNames(x))
-                .ToList();
-            if (todo.Count == 0) return;
-            int done = 0, covers = 0;
-            foreach (var e in todo)
-            {
-                bool repoint = OldPoster(e);
-                var info = InfoService.Cached(e.InfoKey) is { Source: not null } fresh && !repoint && !NoEpisodeNames(e) ? fresh : await InfoService.Refresh(e);
-                NameEpisodes(e); // official episode names, straight away
-                // save when there's no cover yet, or to replace an old metahub poster now that IMDb's is available
-                bool save = info?.CoverUrl != null && (e.Cover == null || (repoint && !info.CoverUrl.Contains("metahub.space")));
-                if (save && await SaveCover(e, info!.CoverUrl!, replace: repoint)) covers++;
-                if (Detail.IsVisible && Detail.DataContext == e) { _ = LoadDetailInfo(e); ShowEpisodes(e, openSeason); } // you're looking at it: show the corrected details
-                done++;
-                if (done % 5 == 0 || done == todo.Count) Toast($"Checking show details · {done} of {todo.Count}");
-                await Task.Delay(2000); // AniList allows ~30 requests a minute right now
-            }
-            if (covers > 0) await SyncLibrary(false); // pick up the new covers
-            Toast(covers > 0 ? $"Details ready · {covers} cover{(covers == 1 ? "" : "s")} added" : "Show details ready");
-            if (Library.IsVisible) ApplyFilter();
-        }
-        finally { prefetching = false; }
+        if (Detail.IsVisible && Detail.DataContext == e) { _ = LoadDetailInfo(e); ShowEpisodes(e, openSeason); }
     }
 
-    static readonly HttpClient CoverHttp = new() { Timeout = TimeSpan.FromSeconds(20) };
+    void OnDetailsDone() { if (Library.IsVisible) ApplyFilter(); }
 
-    // Anime: cover.jpg into the show folder (as before). TV shows and movies: into the app's data\covers, never your media folders.
-    static async Task<bool> SaveCover(Entry e, string url, bool replace = false)
-    {
-        try
-        {
-            string target;
-            if (e.Kind == "anime" && Directory.Exists(e.Folder)) // loose files have no folder of their own: like TV
-            {
-                if (e.Folder.Length == 0 || Directory.EnumerateFiles(e.Folder, "cover.*").Any()) return false;
-                target = Path.Combine(e.Folder, "cover" + Path.GetExtension(new Uri(url).AbsolutePath));
-            }
-            else
-            {
-                target = CoverFile(e.InfoKey);
-                if (File.Exists(target) && !replace) return false;
-                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-            }
-            await File.WriteAllBytesAsync(target, await CoverHttp.GetByteArrayAsync(url));
-            return true;
-        }
-        catch { return false; }
-    }
+
 }
 
 // Star glyph for an entry or a video: filled when it's a favourite. With parameter "vis": Visible only when favourite.

@@ -75,6 +75,14 @@ static partial class Segments
 
     public static bool Has(List<Segment> s, string kind) => s.Any(x => x.Kind == kind);
 
+    // the episode to compare with when looking for the opening by sound: the next one in the same season, else the one before
+    public static Video? Sibling(Entry e, Video v)
+    {
+        var season = e.Videos.Where(x => x.Season == v.Season && x.Season >= 0).ToList();
+        int i = season.IndexOf(v);
+        return i < 0 ? null : i + 1 < season.Count ? season[i + 1] : i > 0 ? season[i - 1] : null;
+    }
+
     // ---------- 1. chapters ----------
 
     static string? KindOf(string title)

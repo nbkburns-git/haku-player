@@ -1,4 +1,4 @@
-﻿# Haku Player end-to-end tests: AI upscaling, its buffer, seeking, pausing, the AI button, subtitles, show details.
+# Haku Player end-to-end tests: AI upscaling, its buffer, seeking, pausing, the AI button, subtitles, show details.
 # Builds a test copy into $Out and runs it with its own data folder (HAKU_DATA_DIR), so your real settings and history are
 # never touched. Each test drives the app through mpv's JSON pipe and Windows UI Automation (never the real mouse).
 #
@@ -56,7 +56,9 @@ function Skip($name, $why) { $Results.Add([pscustomobject]@{ Test = $name; Resul
 
 # ---------- the app ----------
 
+. (Join-Path $PSScriptRoot "safe-to-launch.ps1")
 function Start-Haku([string]$file, [hashtable]$settings = @{}, [hashtable]$details = @{}) {
+    if ($why = Test-SafeToLaunch) { throw "not launching a test copy: $why" } # a game or your own Haku is in front
     if (Test-Path $DataDir) { Remove-Item $DataDir -Recurse -Force }
     New-Item -ItemType Directory $DataDir | Out-Null
     # show details as Haku saves them (info\<key>.json), so a test doesn't wait for the network: @{ 'tv_South_Park' = @('Animation', 'Comedy') }

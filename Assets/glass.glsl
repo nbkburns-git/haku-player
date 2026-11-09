@@ -5,6 +5,8 @@
 // with u and v in -1..2 (exact in a float; steps of 1/1365 of the picture). Per rectangle: _p = x,y  _s = w,h
 // _r = radius,alpha (0..1 of the picture). gpq = 1 when mpv outputs HDR (PQ / BT.2020): the glass then works on the
 // same SDR-like values it does in SDR, so it looks the same (capped at SDR white, like SDR).
+// gwhite (HDR output, SDR video): mpv puts SDR white at 203 nits, Windows at its "SDR content brightness" setting, so the
+// whole picture's light is scaled by (Windows' SDR white / 203) to match the rest of the screen. 1 = unchanged.
 
 //!PARAM a_p
 //!TYPE float
@@ -48,6 +50,9 @@
 //!PARAM gpq
 //!TYPE float
 0.0
+//!PARAM gwhite
+//!TYPE float
+1.0
 
 //!HOOK OUTPUT
 //!BIND HOOKED
@@ -75,6 +80,16 @@ vec3 from_work(vec3 w)
     vec3 y = pow(clamp(w, 0.0, 1.0), vec3(2.2)) * (203.0 / 10000.0); // capped at SDR white, as in SDR: the bars stay readable over HDR highlights
     vec3 ym = pow(min(y, 1.0), vec3(0.1593017578125));
     return pow((0.8359375 + 18.8515625 * ym) / (1.0 + 18.6875 * ym), vec3(78.84375));
+}
+
+// gwhite: PQ in, PQ out, light scaled
+vec4 white_scale(vec4 c)
+{
+    if (gpq < 0.5 || gwhite == 1.0) return c;
+    vec3 e = pow(max(c.rgb, 0.0), vec3(1.0 / 78.84375));
+    vec3 y = pow(max(e - 0.8359375, 0.0) / (18.8515625 - 18.6875 * e), vec3(1.0 / 0.1593017578125)) * gwhite;
+    vec3 ym = pow(min(y, 1.0), vec3(0.1593017578125));
+    return vec4(pow((0.8359375 + 18.8515625 * ym) / (1.0 + 18.6875 * ym), vec3(78.84375)), c.a);
 }
 
 // signed distance to a rounded rectangle (pixels; negative inside)
@@ -108,7 +123,7 @@ vec4 hook()
         !pick(p, size, b_p, b_s, b_r, rect, rad, alpha) &&
         !pick(p, size, c_p, c_s, c_r, rect, rad, alpha) &&
         !pick(p, size, d_p, d_s, d_r, rect, rad, alpha))
-        return base;
+        return white_scale(base);
 
     vec2 center = (rect.xy + rect.zw * 0.5) * size;
     vec2 half_size = rect.zw * size * 0.5;
@@ -141,5 +156,5 @@ vec4 hook()
     // a whisper of specular brightening along the top rim, only where there is light
     col += col * 0.18 * rim * smoothstep(center.y, center.y - half_size.y, p.y); // scales with the picture: black stays black
 
-    return mix(base, vec4(from_work(col), base.a), inside * alpha);
+    return white_scale(mix(base, vec4(from_work(col), base.a), inside * alpha));
 }

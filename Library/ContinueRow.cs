@@ -14,31 +14,9 @@ namespace AnimePlayer;
 // Home page "Continue watching": a row of every show you're part-way through, or onto the next episode of, newest first.
 public partial class MainWindow
 {
-    const int ContinueMax = 10;
     Button? singleCard; // with only one show, its card spans the row
     bool continueSized;
     readonly Dictionary<string, ImageSource?> continueArt = new(StringComparer.OrdinalIgnoreCase);
-
-    // (show, episode to play, resume record if mid-episode, when you last watched it)
-    List<(Entry E, int Index, WatchRec? Rec, DateTime Last)> ContinueList()
-    {
-        var list = new List<(Entry, int, WatchRec?, DateTime)>();
-        foreach (var e in Everything(lib).Where(x => x.Unit != "themes"))
-        {
-            int bi = -1; WatchRec? best = null;
-            for (int i = 0; i < e.Videos.Count; i++)
-                if (Watch.Get(e.Videos[i].Path) is { } r && (best == null || r.Last > best.Last)) { best = r; bi = i; }
-            if (best == null) continue;
-            if (Watch.Data.Hidden.TryGetValue(e.Folder, out var hid) && best.Last <= hid) continue; // closed, and not watched since
-            if (!best.Done && best.Pos > 5) list.Add((e, bi, best, best.Last)); // mid-episode: resume it
-            else if (best.Done && e.Kind != "movie")
-            {
-                int next = e.Videos.FindIndex(bi + 1, v => v.Season >= 0 && !Watch.IsDone(v.Path)); // finished one: the next unwatched episode
-                if (next >= 0) list.Add((e, next, null, best.Last));
-            }
-        }
-        return list.OrderByDescending(x => x.Item4).Take(ContinueMax).ToList();
-    }
 
     void UpdateContinue()
     {

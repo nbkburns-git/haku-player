@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -39,8 +39,6 @@ public partial class MainWindow
         }
     }
 
-    static string Hours(double secs) => secs >= 3600 * 100 ? $"{secs / 3600:0} h" : secs >= 3600 ? $"{secs / 3600:0.#} h" : $"{Math.Round(secs / 60)} min";
-    static string Size(long bytes) => bytes >= 1L << 40 ? $"{bytes / (double)(1L << 40):0.##} TB" : $"{bytes / (double)(1L << 30):0.#} GB";
 
     void StatsPage(Panel p)
     {
