@@ -133,17 +133,21 @@ public partial class MainWindow
     // the pointer disappears over the video while the bars are hidden, as in the WPF app (Win32's cursor count, so balanced)
     // The pointer disappears over the video while the bars are hidden, as in the WPF app. In WinUI the pointer over
     // content is the element's ProtectedCursor (Win32 ShowCursor / SetCursor only reach the window frame:
-    // microsoft-ui-xaml#10128), so the video area gets a cursor that has been closed, which shows as nothing
-    // (WindowsAppSDK discussion #3601). Back to the normal arrow when the bars come back.
+    // microsoft-ui-xaml#10128), so the video area gets a transparent cursor (HiddenCursor); if one can't be made, a
+    // closed cursor, which also shows as nothing (WindowsAppSDK discussion #3601). The arrow again when the bars return.
     void HideCursor(bool hide)
     {
         if (hide == cursorHidden) return;
         cursorHidden = hide;
         if (hide)
         {
-            var none = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.Arrow);
-            videoHost.SetCursor(none);
-            none.Dispose(); // closed: no picture
+            if (HiddenCursor.Get() is { } clear) videoHost.SetCursor(clear);
+            else
+            {
+                var none = Microsoft.UI.Input.InputSystemCursor.Create(Microsoft.UI.Input.InputSystemCursorShape.Arrow);
+                videoHost.SetCursor(none);
+                none.Dispose(); // closed: no picture
+            }
         }
         else videoHost.SetCursor(null);
         RefreshCursor();
@@ -161,13 +165,21 @@ public partial class MainWindow
         if (under == IntPtr.Zero) return;
         GetWindowThreadProcessId(under, out uint pid);
         if (pid != (uint)Environment.ProcessId) return;
-        nudgedAt = pt; nudgedWhen = DateTime.UtcNow;
         SetCursorPos(pt.X, pt.Y); // the same spot: nothing moves
     }
 
-    // the move that RefreshCursor causes: same place, just after
-    POINT nudgedAt; DateTime nudgedWhen;
-    bool IsNudge() => (DateTime.UtcNow - nudgedWhen).TotalMilliseconds < 250 && GetCursorPos(out var p) && p.X == nudgedAt.X && p.Y == nudgedAt.Y;
+    // Pointer activity: only when the pointer has really moved on the screen. Windows and WinUI send moves that aren't
+    // the mouse: when the window is resized under a still pointer (the video sets its shape), when the cursor is changed
+    // (WinUI raises a PointerMoved: hiding it would bring it straight back), and RefreshCursor's own. Positions inside
+    // the window change with the window, so it's the screen position that's compared, as the WPF app does.
+    POINT lastScreenAt;
+    bool PointerReallyMoved()
+    {
+        if (!GetCursorPos(out var p)) return true;
+        if (p.X == lastScreenAt.X && p.Y == lastScreenAt.Y) return false;
+        lastScreenAt = p;
+        return true;
+    }
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct POINT { public int X, Y; }
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);

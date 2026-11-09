@@ -8,9 +8,9 @@
 
 Browse your anime, TV shows and movies like a streaming service, then watch them in mpv,
 built right into the window, with live frosted-glass controls floating over the picture,
-and real-time AI upscaling to 4K on NVIDIA RTX cards.
+real-time AI upscaling to 4K on NVIDIA RTX cards, and real HDR on HDR monitors.
 
-[![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)](#requirements) [![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/9.0) [![WPF](https://img.shields.io/badge/UI-WPF-68217A)](#how-it-works) [![mpv](https://img.shields.io/badge/player-mpv-691F69)](https://mpv.io) [![AI upscaling](https://img.shields.io/badge/AI-TensorRT-76B900?logo=nvidia&logoColor=white)](#ai-upscaling) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
+[![Windows 11](https://img.shields.io/badge/Windows-11-0078D4?logo=windows11&logoColor=white)](#requirements) [![.NET 9](https://img.shields.io/badge/.NET-9.0-512BD4?logo=dotnet&logoColor=white)](https://dotnet.microsoft.com/download/dotnet/9.0) [![WinUI 3](https://img.shields.io/badge/UI-WinUI%203-0078D4)](#how-it-works) [![HDR](https://img.shields.io/badge/HDR-HDR10-F59E0B)](#hdr) [![mpv](https://img.shields.io/badge/player-mpv-691F69)](https://mpv.io) [![AI upscaling](https://img.shields.io/badge/AI-TensorRT-76B900?logo=nvidia&logoColor=white)](#ai-upscaling) [![License: MIT](https://img.shields.io/badge/license-MIT-22c55e)](LICENSE)
 
 <img src="docs/images/home.png" alt="Haku Player home screen" width="100%"/>
 
@@ -41,14 +41,18 @@ and real-time AI upscaling to 4K on NVIDIA RTX cards.
 
 <img src="docs/images/glass.gif" alt="Liquid glass controls over One Punch Man" width="100%"/>
 
-The controls float over the video in two glass pills. A GPU shader blurs, brightens and bends the *moving picture* underneath them every frame, Apple-style, and they fade away after a few seconds. The window itself uses Windows 11's acrylic, with slowly drifting colour glows. <i>(One Punch Man)</i>
+The controls float over the video in two glass pills. A GPU shader blurs, brightens and bends the *moving picture* underneath them every frame, Apple-style, and they fade away after a few seconds, the pointer with them. The window itself uses Windows 11's acrylic, with slowly drifting colour glows. <i>(One Punch Man)</i>
+
+### HDR
+
+On a monitor with Windows HDR on, Haku Player outputs real HDR10 (PQ, BT.2020) at your monitor's peak brightness, so HDR episodes and films play as they were mastered. SDR videos stay exactly as they look today, at the brightness Windows' *SDR content brightness* slider sets, and the glass, subtitles and controls sit at that same level next to them. Move the window to an SDR monitor, or turn HDR off, and it switches on its own.
 
 ### Anime, TV shows and movies in one library
 
 <table>
   <tr>
     <td width="50%"><img src="docs/images/library.png" alt="Library grid with anime, TV shows and movies"/></td>
-    <td width="50%"><img src="docs/images/show.png" alt="Rick and Morty show page"/></td>
+    <td width="50%"><img src="docs/images/show.png" alt="Cowboy Bebop show page"/></td>
   </tr>
   <tr>
     <td><b>Library</b> · covers, search, favourites, filters by genre or kind, sorting. Badly named folders still find the right show. Openings and endings get a library of their own, named the <a href="https://animethemes.moe">AnimeThemes</a> way.</td>
@@ -119,6 +123,7 @@ The controls float over the video in two glass pills. A GPU shader blurs, bright
 <summary><b>Player</b></summary>
 
 - mpv built into the app (libmpv), drawing straight into the window, with GPU decoding and the `high-quality` profile. Resumes where you left off (openings and endings always start from the top).
+- HDR10 output on HDR monitors (PQ at the monitor's own peak), SDR on the rest; it follows the window between monitors.
 - Live liquid-glass controls (a GLSL shader on mpv's output). They hide after 2, 3 or 5 seconds, together with the cursor.
 - Timeline: exact-frame hover previews, chapter ticks, opening and ending marked. Previews decode outward from where you hover, on the GPU (CUDA) with a CPU fallback, and are cached.
 - Skip opening, ending and recap (optionally automatic), an Up next countdown and Autoplay.
@@ -156,9 +161,9 @@ The controls float over the video in two glass pills. A GPU shader blurs, bright
 
 | | |
 |---|---|
-| **Windows** | Windows 11 (22H2 or later, for the acrylic backdrop) |
-| **.NET** | [.NET 9 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/9.0) (or the SDK to build) |
-| **libmpv** | To build: put `libmpv-2.dll` in `lib\` (see below). It's copied next to the exe, so nothing else to install |
+| **Windows** | Windows 11 (22H2 or later, for the acrylic backdrop). HDR needs Windows HDR turned on for that monitor |
+| **.NET** | The [.NET 9 SDK](https://dotnet.microsoft.com/download/dotnet/9.0) to build. The Windows App SDK (WinUI 3) comes with the build, so there's nothing else to install |
+| **libmpv** | To build: put `libmpv-2.dll` in `lib\` (see below). It's copied next to the exe |
 | **FFmpeg** | `winget install Gyan.FFmpeg` (`ffmpeg` / `ffprobe` on `PATH`), for previews, opening/ending detection and stats |
 | **GPU** | Any. NVIDIA cards decode timeline previews with CUDA; others fall back to the CPU |
 | **AI upscaling** (optional) | An NVIDIA RTX card; Haku's own `libmpv-2.dll` (with its `vf_hakusr` filter) and `haku_sr.dll`, built into `lib\` and copied next to the exe; and the TensorRT runtime and models in `%LOCALAPPDATA%\Haku Upscaler`. How to build them: [native/README.md](native/README.md). Without them the option just stays off |
@@ -170,15 +175,12 @@ git clone https://github.com/nbkburns-git/haku-player.git
 cd haku-player
 # libmpv (too big for the repo): from a shinchiro "mpv-dev-x86_64" build, https://github.com/shinchiro/mpv-winbuild-cmake/releases
 # extract libmpv-2.dll into lib\
-dotnet build -c Release
-.\bin\Release\net9.0-windows\HakuPlayer.exe
+dotnet build HakuWinUI\HakuWinUI.csproj -c Release
+.\HakuWinUI\bin\x64\Release\net9.0-windows10.0.26100.0\win-x64\HakuPlayer.exe
 ```
 
-For a faster-starting build (ReadyToRun):
-
-```powershell
-dotnet publish -c Release -r win-x64 --self-contained false -p:PublishReadyToRun=true -o publish
-```
+The app is `HakuWinUI\` (WinUI 3). The original WPF version (`AnimePlayer.csproj` in the root) is still there and shares the
+library, player and AI code with it, but the WinUI app is the one to use: it's the one with HDR.
 
 Then open **Settings → Library → Add library** and choose your folders.
 
@@ -209,11 +211,19 @@ Everything Haku Player stores (settings, watch history, fetched details, covers,
 ## Tests
 
 ```powershell
+powershell -ExecutionPolicy Bypass -File tests\winui-tests.ps1    # the app, end to end (a few minutes, muted)
 powershell -ExecutionPolicy Bypass -File tests\native-tests.ps1   # haku_sr.dll: colours, padded edges, speed per tier
-powershell -ExecutionPolicy Bypass -File tests\app-tests.ps1      # the app, end to end (a few minutes, muted)
 ```
 
-The app tests build a test copy with its own data folder (your settings and history aren't touched) and drive it through
+`winui-tests.ps1` runs a test copy with its own data folder (your settings and history aren't touched) on a monitor of
+your choice, without ever taking focus, in SDR and in forced HDR. It drives the copy through mpv's pipe and a small test
+pipe of its own: playing, seeking, the HDR output and glass settings, the first-frame time, Skip opening, Up next, watch
+progress, subtitle choice and your own subtitle files, AI upscaling start-up, the library, show pages and their smooth
+scrolling, the pointer hiding with the controls, the pop-out player and the single-instance hand-over. It won't start
+while a game or anything fullscreen is in front. `tests\compare-shots.ps1` captures the same pages from the WinUI and
+the WPF app side by side.
+
+`tests\app-tests.ps1` is the WPF app's suite. It builds a test copy and drives it through
 mpv's pipe and UI Automation: the AI start-up buffer, exact seeks, pausing, the AI button, turning it on while paused, a
 10-bit 30 fps video (no frame drops, no green edge), a 4K file, subtitle choice, the next episode, your own subtitle files,
 RTX Video on a live-action show and the anime model on a cartoon, the Adore model (its first download and preparation, switching model and tier while playing, leftover settings, the settings page), leaving the player mid-start, openings from a file's chapters, show-detail matching (and re-checking older matches), renaming a show, the
@@ -223,8 +233,9 @@ monitor and never take focus: set `$TestWindow = "x,y,w,h"` there, in screen pix
 
 ## How it works
 
-The short version: mpv runs inside the app as a library and draws each frame into a Direct3D texture that WPF shows like any other image, so the video, the controls and the window resize as one picture. The app drives mpv over its JSON IPC pipe, and the blur under the controls is a shader running inside mpv.
+The short version: mpv runs inside the app as a library and renders each frame straight into a Direct3D 11 swap chain that WinUI 3 composites with the rest of the window (a `SwapChainPanel`), so the video, the controls and the window resize as one picture. On an HDR monitor the swap chain is 10-bit HDR10 (PQ, BT.2020) and mpv tone-maps to the monitor's peak; SDR videos are placed at Windows' SDR white level. The app drives mpv over its JSON IPC pipe, and the blur under the controls is a shader running inside mpv, told where the glass is and how bright SDR white is.
 [**docs/how-it-works.md**](docs/how-it-works.md) has the details: the glass shader, why fades are drawn by one renderer only, how openings are detected from audio fingerprints, and more.
+How the app moved from WPF to WinUI 3 for HDR, and what was measured along the way: [**docs/winui3-migration-plan.md**](docs/winui3-migration-plan.md).
 AI upscaling is an mpv video filter (`vf_hakusr`) that hands D3D11 decoder frames to TensorRT and back without leaving the GPU, on its own thread, a second ahead: [**docs/realtime-upscaling-plan.md**](docs/realtime-upscaling-plan.md) and [**native/README.md**](native/README.md).
 
 ## Privacy

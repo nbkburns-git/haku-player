@@ -42,7 +42,6 @@ public partial class MainWindow : Window
     static bool WantHdr(DisplayInfo? d) => HdrMode == "force" || (HdrMode != "off" && d?.Hdr == true);
 
     MpvCore? core;
-    Windows.Foundation.Point lastPointerAt;
     bool libraryLoaded;
     (List<string> Files, int Index)? pendingPlay;
     VideoView? video;
@@ -105,7 +104,7 @@ public partial class MainWindow : Window
         root.KeyDown += OnKey;
         root.CharacterReceived += OnChar;
         // only real movement: Windows re-sends a move when things change under a still pointer (as the WPF app filters it)
-        root.PointerMoved += (_, e) => { var at = e.GetCurrentPoint(root).Position; if (at == lastPointerAt) return; lastPointerAt = at; if (!IsNudge()) Activity(); };
+        root.PointerMoved += (_, _) => { if (PointerReallyMoved() && core != null) { if (cursorHidden) MpvCore.Note("pointer moved: showing the bars"); Activity(); } };
         // keyboard focus for the keys above, only once the window is really activated: focusing content in a window shown
         // without activation (tests on the second monitor) brought it to the front
         Activated += (_, e) => { if (e.WindowActivationState != WindowActivationState.Deactivated) root.Focus(FocusState.Programmatic); };

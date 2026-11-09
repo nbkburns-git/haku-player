@@ -195,6 +195,52 @@ public sealed class CursorGrid : Grid
     public void SetCursor(InputCursor? c) => ProtectedCursor = c;
 }
 
+// A fully transparent pointer, for hiding it over the video. WinUI shows an element's ProtectedCursor, and turns a
+// Win32 cursor into one with IInputCursorStaticsInterop.CreateFromHCursor (microsoft.ui.input.interop.h); the cursor
+// itself is a 32x32 one whose masks leave the screen as it is (the way FlyPhotos' MouseAutoHider hides it).
+static class HiddenCursor
+{
+    static InputCursor? made;
+    static bool tried;
+
+    public static InputCursor? Get()
+    {
+        if (tried) return made;
+        tried = true;
+        try
+        {
+            var and = new byte[32 * 32 / 8]; Array.Fill(and, (byte)0xFF); // AND 1, XOR 0: the pixel underneath, unchanged
+            var xor = new byte[32 * 32 / 8];
+            var h = CreateCursor(GetModuleHandle(null), 0, 0, 32, 32, and, xor);
+            if (h == IntPtr.Zero) { MpvCore.Note("hidden cursor: CreateCursor failed"); return null; }
+            made = FromHCursor(h);
+            MpvCore.Note(made != null ? "hidden cursor: transparent cursor ready" : "hidden cursor: CreateFromHCursor unavailable");
+        }
+        catch (Exception e) { MpvCore.Note($"hidden cursor: {e.Message}"); }
+        return made;
+    }
+
+    static unsafe InputCursor? FromHCursor(IntPtr hcursor)
+    {
+        var factory = WinRT.ActivationFactory.Get("Microsoft.UI.Input.InputCursor");
+        var iid = new Guid("ac6f5065-90c4-46ce-beb7-05e138e54117"); // IInputCursorStaticsInterop
+        if (System.Runtime.InteropServices.Marshal.QueryInterface(factory.ThisPtr, in iid, out var interop) < 0) return null;
+        try
+        {
+            // IUnknown (3) + IInspectable (3), then CreateFromHCursor
+            var fn = (delegate* unmanaged[Stdcall]<IntPtr, IntPtr, IntPtr*, int>)(*(IntPtr**)interop)[6];
+            IntPtr cursor;
+            if (fn(interop, hcursor, &cursor) < 0 || cursor == IntPtr.Zero) return null;
+            try { return WinRT.MarshalInspectable<InputCursor>.FromAbi(cursor); }
+            finally { System.Runtime.InteropServices.Marshal.Release(cursor); }
+        }
+        finally { System.Runtime.InteropServices.Marshal.Release(interop); }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr CreateCursor(IntPtr inst, int x, int y, int w, int h, byte[] and, byte[] xor);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] static extern IntPtr GetModuleHandle(string? name);
+}
+
 public sealed class HandButton : Button
 {
     public HandButton() => ProtectedCursor = InputSystemCursor.Create(InputSystemCursorShape.Hand);
