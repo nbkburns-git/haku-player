@@ -410,9 +410,10 @@ public partial class MainWindow : Window
     double barTarget = 1;
     bool fading;
 
-    void Activity()
+    void Activity([System.Runtime.CompilerServices.CallerFilePath] string file = "", [System.Runtime.CompilerServices.CallerLineNumber] int line = 0)
     {
         if (core == null) return;
+        if (cursorHidden) MpvCore.Note($"bars shown by {Path.GetFileName(file)}:{line}"); // the trace says what brought them back
         ShowBar(true);
         hideTimer.Stop(); hideTimer.Start();
     }

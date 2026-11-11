@@ -114,6 +114,8 @@ public partial class MainWindow
 
     void Show(UIElement page)
     {
+        // once the new page is laid out: WinUI looks again at what's under a still pointer (PlayerExtras.WinUI.cs)
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, PointerLookAgain);
         view = page;
         bool playing = page == videoHost;
         pages.Visibility = playing ? Visibility.Collapsed : Visibility.Visible;

@@ -61,7 +61,8 @@ public partial class MainWindow
         foreach (var el in new UIElement[] { bar.Pill, topBar.Panel })
         {
             el.PointerEntered += (_, _) => overBars = true;
-            el.PointerExited += (_, _) => { overBars = false; Activity(); };
+            // WinUI also raises this under a still pointer (re-hit-testing after layout): only a real move counts
+            el.PointerExited += (_, _) => { overBars = false; if (PointerReallyMoved()) Activity(); };
         }
         // a click anywhere but the open menu (and its own buttons) closes it
         root.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, e) =>
@@ -152,25 +153,128 @@ public partial class MainWindow
         else videoHost.SetCursor(null);
         RefreshCursor();
         MpvCore.Note(hide ? "pointer hidden" : "pointer shown");
+        if (hide && MpvCore.Trace != null) _ = TraceCursor();
+        if (hide) cursorGuard.Start(); else cursorGuard.Stop();
     }
 
-    // WinUI only works out what's under the pointer when the pointer moves (UIElement.PointerEntered docs): after the
-    // page is swapped for the video under a still pointer, it still thinks it's over the card you clicked, so the video's
-    // hidden cursor isn't used. Putting the pointer where it already is makes Windows send a move, and WinUI looks again.
-    // Only when the pointer is over this window (never over a game or another app); that move isn't activity (MainWindow).
+    // WinUI re-applies a cursor on its own layout passes without asking the window (no WM_SETCURSOR, so the hook above
+    // never hears of it: microsoft-ui-xaml#11942), which brought the arrow back mid-playback. While hidden, check what
+    // Windows is showing and ask again if it isn't ours.
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? guard;
+    Microsoft.UI.Dispatching.DispatcherQueueTimer cursorGuard
+    {
+        get
+        {
+            if (guard != null) return guard;
+            guard = DispatcherQueue.CreateTimer();
+            guard.Interval = TimeSpan.FromMilliseconds(250);
+            guard.Tick += (_, _) =>
+            {
+                var ci = new CURSORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<CURSORINFO>() };
+                if (!cursorHidden || HiddenCursor.Handle == IntPtr.Zero || !GetCursorInfo(ref ci) || (ci.flags & 1) == 0 || ci.hCursor == HiddenCursor.Handle) return;
+                if (WindowFromPoint(ci.pt) != cursorWindow) return; // over another window: not ours to set
+                MpvCore.Note($"pointer: WinUI put cursor {ci.hCursor:X} back while hidden, hiding it again");
+                RefreshCursor();
+            };
+            return guard;
+        }
+    }
+
+    // trace: what Windows is really showing a moment after hiding (our transparent cursor, or what instead), and what's
+    // under the pointer
+    async System.Threading.Tasks.Task TraceCursor()
+    {
+        await System.Threading.Tasks.Task.Delay(200);
+        var ci = new CURSORINFO { cbSize = System.Runtime.InteropServices.Marshal.SizeOf<CURSORINFO>() };
+        GetCursorInfo(ref ci);
+        var under = WindowFromPoint(ci.pt);
+        var cls = new System.Text.StringBuilder(64); GetClassName(under, cls, cls.Capacity);
+        GetWindowThreadProcessId(under, out uint pid);
+        MpvCore.Note($"cursor check: showing={(ci.flags & 1) != 0}, cursor {ci.hCursor:X} (ours {HiddenCursor.Handle:X}, arrow {LoadCursor(IntPtr.Zero, 32512):X}, hand {LoadCursor(IntPtr.Zero, 32649):X}), " +
+                     $"at {ci.pt.X},{ci.pt.Y} over {cls} ({(pid == (uint)Environment.ProcessId ? "Haku" : $"process {pid}")}), still hidden: {cursorHidden}, over bars: {overBars}");
+        // the XAML elements under the pointer, top first (the cursor comes from the first one that sets one)
+        var client = ci.pt; ScreenToClient(hwnd, ref client);
+        double k = root.XamlRoot?.RasterizationScale ?? 1;
+        var hits = Microsoft.UI.Xaml.Media.VisualTreeHelper.FindElementsInHostCoordinates(new Windows.Foundation.Point(client.X / k, client.Y / k), root)
+            .Take(6).Select(e => $"{e.GetType().Name}{(e is FrameworkElement { Name.Length: > 0 } f ? "#" + f.Name : "")}{(e == videoHost ? "(video area)" : "")}");
+        MpvCore.Note($"cursor check: under the pointer: {string.Join(" > ", hits)}; video area cursor: {videoHost.CurrentCursor?.GetType().Name ?? "none"}");
+    }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct CURSORINFO { public int cbSize, flags; public IntPtr hCursor; public POINT pt; }
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetCursorInfo(ref CURSORINFO ci);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool ScreenToClient(IntPtr h, ref POINT p);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr LoadCursor(IntPtr inst, int id);
+    [System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)] static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
+
+    // WinUI sets the pointer only when a mouse event comes in, so a cursor changed while the mouse is still shows only
+    // after the next move (which brings the bars back). The trace showed it: the video area held the transparent cursor
+    // and Windows kept drawing the arrow; a click showed it for a frame. Windows asks the window under the pointer which
+    // cursor to show (WM_SETCURSOR), and that is WinUI's DesktopChildSiteBridge. So that window is hooked: while hidden it
+    // answers with the transparent cursor, and it's asked once straight away (on its own thread, where SetCursor counts).
+    IntPtr cursorWindow, cursorWindowProc;
+    WndProc? cursorHook;
     void RefreshCursor()
     {
-        if (!GetCursorPos(out var pt)) return;
-        var under = WindowFromPoint(pt);
-        if (under == IntPtr.Zero) return;
-        GetWindowThreadProcessId(under, out uint pid);
-        if (pid != (uint)Environment.ProcessId) return;
-        SetCursorPos(pt.X, pt.Y); // the same spot: nothing moves
+        if (cursorWindow == IntPtr.Zero)
+        {
+            EnumChildWindows(hwnd, (h, _) =>
+            {
+                var sb = new System.Text.StringBuilder(64);
+                GetClassName(h, sb, sb.Capacity);
+                if (sb.ToString() != "Microsoft.UI.Content.DesktopChildSiteBridge") return true;
+                cursorWindow = h; return false;
+            }, IntPtr.Zero);
+            if (cursorWindow == IntPtr.Zero) { MpvCore.Note("pointer: WinUI's content window not found"); return; }
+            cursorHook = (h, msg, w, l) =>
+            {
+                if (msg == 0x0020 /* WM_SETCURSOR */ && cursorHidden && ((long)l & 0xFFFF) == 1 /* HTCLIENT */ && HiddenCursor.Handle != IntPtr.Zero)
+                {
+                    SetCursor(HiddenCursor.Handle);
+                    return (IntPtr)1;
+                }
+                return CallWindowProc(cursorWindowProc, h, msg, w, l);
+            };
+            cursorWindowProc = SetWindowLongPtr(cursorWindow, -4 /* GWLP_WNDPROC */, System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate(cursorHook));
+            GetWindowThreadProcessId(cursorWindow, out _);
+            MpvCore.Note($"pointer: hooked WinUI's content window {cursorWindow:X} (thread {GetWindowThreadProcessId(cursorWindow, out _)}, this thread {GetCurrentThreadId()})");
+        }
+        // ask it now (only when the pointer is over it: never touches the pointer over another window)
+        if (!GetCursorPos(out var pt) || WindowFromPoint(pt) != cursorWindow) return;
+        SendMessage(cursorWindow, 0x0020, cursorWindow, (IntPtr)(1 | 0x0200 << 16));
     }
+
+    // WinUI remembers which element is under the pointer and only looks again when the mouse moves; meanwhile it keeps
+    // putting that element's cursor back on every layout pass (microsoft-ui-xaml#11942). After a page change under a still
+    // pointer (an episode clicked: the video takes the page's place) it still thinks the pointer is over what was clicked,
+    // so the video's hidden cursor never showed until you clicked the video. A real mouse move makes it look again: the
+    // pointer goes 1 px over and straight back (SetCursorPos: no input reaches other apps). Only when Haku is in front and
+    // the pointer is over it.
+    async void PointerLookAgain()
+    {
+        if (GetForegroundWindow() != hwnd || !GetCursorPos(out var pt)) return;
+        var under = WindowFromPoint(pt);
+        GetWindowThreadProcessId(under, out uint pid);
+        if (under == IntPtr.Zero || pid != (uint)Environment.ProcessId) return;
+        int x = pt.X == 0 ? 1 : pt.X - 1;
+        SetCursorPos(x, pt.Y);
+        await System.Threading.Tasks.Task.Delay(30); // WinUI sees the move (moved and back at once, Windows may merge them away)
+        if (GetCursorPos(out var now) && now.X == x && now.Y == pt.Y) SetCursorPos(pt.X, pt.Y); // unless you've moved it since
+        MpvCore.Note($"pointer: page changed under it, WinUI told to look again at {pt.X},{pt.Y}");
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+
+    delegate bool EnumProc(IntPtr h, IntPtr l);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr parent, EnumProc f, IntPtr l);
+    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr SetCursor(IntPtr c);
+    [System.Runtime.InteropServices.DllImport("user32.dll", EntryPoint = "SendMessageW")] static extern IntPtr SendMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+
 
     // Pointer activity: only when the pointer has really moved on the screen. Windows and WinUI send moves that aren't
     // the mouse: when the window is resized under a still pointer (the video sets its shape), when the cursor is changed
-    // (WinUI raises a PointerMoved: hiding it would bring it straight back), and RefreshCursor's own. Positions inside
+    // (WinUI raises a PointerMoved: hiding it would bring it straight back), and the cursor refresh. Positions inside
     // the window change with the window, so it's the screen position that's compared, as the WPF app does.
     POINT lastScreenAt;
     bool PointerReallyMoved()
@@ -183,7 +287,6 @@ public partial class MainWindow
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)] struct POINT { public int X, Y; }
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
-    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern IntPtr WindowFromPoint(POINT p);
     [System.Runtime.InteropServices.DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
 

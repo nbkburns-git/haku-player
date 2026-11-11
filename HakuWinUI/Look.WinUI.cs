@@ -192,7 +192,11 @@ static partial class GlassLook
 
 public sealed class CursorGrid : Grid
 {
-    public void SetCursor(InputCursor? c) => ProtectedCursor = c;
+    static readonly InputCursor Arrow = InputSystemCursor.Create(InputSystemCursorShape.Arrow);
+    // null: the normal arrow, set explicitly (WinUI may not react to a change from "no cursor set": FlyPhotos'
+    // auto-hider always holds one and swaps it)
+    public void SetCursor(InputCursor? c) => ProtectedCursor = c ?? Arrow;
+    public InputCursor? CurrentCursor => ProtectedCursor;
 }
 
 // A fully transparent pointer, for hiding it over the video. WinUI shows an element's ProtectedCursor, and turns a
@@ -201,6 +205,7 @@ public sealed class CursorGrid : Grid
 static class HiddenCursor
 {
     static InputCursor? made;
+    public static IntPtr Handle { get; private set; } // the Win32 cursor behind it (for the trace)
     static bool tried;
 
     public static InputCursor? Get()
@@ -213,6 +218,7 @@ static class HiddenCursor
             var xor = new byte[32 * 32 / 8];
             var h = CreateCursor(GetModuleHandle(null), 0, 0, 32, 32, and, xor);
             if (h == IntPtr.Zero) { MpvCore.Note("hidden cursor: CreateCursor failed"); return null; }
+            Handle = h;
             made = FromHCursor(h);
             MpvCore.Note(made != null ? "hidden cursor: transparent cursor ready" : "hidden cursor: CreateFromHCursor unavailable");
         }
